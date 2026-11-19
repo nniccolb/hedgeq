@@ -32,7 +32,7 @@ const MAX_SUBREQUESTS: f64 = 1_500_000.0;
 /// Approximate number of individual requests returned per policy for plotting.
 const TARGET_SAMPLES: f64 = 1200.0;
 /// Approximate number of fully traced requests (per-shard timings) per policy.
-const TARGET_TRACES: f64 = 80.0;
+const TARGET_TRACES: f64 = 150.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]

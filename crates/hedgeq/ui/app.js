@@ -15,7 +15,7 @@
     return n;
   };
 
-  const SLOW_MS = 200;        // a page load over this is "slow"
+  const SLOW_MS = 1000;       // a page load over this is "slow"
   const ms = (v) => (v >= 1000 ? (v / 1000).toFixed(1) + ' s' : Math.round(v) + ' ms');
   const secs = (v) => (v / 1000).toFixed(2) + ' s';
 
@@ -26,7 +26,11 @@
   ];
 
   const SURGE = 60;           // % traffic increase at the midpoint (fixed experiment)
-  const BUDGET = 5;           // % extra requests allowed
+  const BUDGET = 10;          // % extra requests allowed
+  // Backend scale for the demo: ~30 ms calls, 30 shards (4 cards + 6 bars + 20 rows), 3 minutes of traffic.
+  // Servers stall 3% of the time at 40x slower: a deliberately severe setting so the effect is easy to see.
+  const SCALE = { fanout: 30, service_median_ms: 30, episode_ms: 700, duration_s: 180, warmup_s: 15, slow_fraction: 0.03, slow_factor: 40 };
+  const PIECES = 30;
   let seed = 1;
   let last = null;
   const by = (id) => last.results.find((r) => r.id === id);
@@ -38,7 +42,7 @@
       const res = await fetch('/api/simulate', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ seed, surge_factor: 1 + SURGE / 100, budget: BUDGET / 100 }),
+        body: JSON.stringify({ ...SCALE, seed, surge_factor: 1 + SURGE / 100, budget: BUDGET / 100 }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error || 'request failed');
@@ -62,22 +66,32 @@
       ? `Halfway through the run, request volume increases by ${surge}%.`
       : 'Request volume stays constant throughout the run.';
 
-    const best = Math.min(...ROWS.map((r) => by(r.id).user.p999));
+    const best = Math.min(...ROWS.map((r) => by(r.id).user.p99));
     $('#tbl tbody').replaceChildren(...ROWS.map((r) => {
       const x = by(r.id);
       const tr = h('tr');
-      const cells = [r.name, ms(x.user.p999), r.id === 'none' ? '0%' : x.extra_pct.toFixed(1) + '%'].map((t) => h('td', '', t));
-      if (x.user.p999 === best) cells[1].className = 'best';
+      const cells = [r.name, ms(x.user.p50), ms(x.user.p99), r.id === 'none' ? '0%' : x.extra_pct.toFixed(1) + '%'].map((t) => h('td', '', t));
+      if (x.user.p99 === best) cells[2].className = 'best';
       tr.append(...cells);
       return tr;
     }));
 
     const a = by('adaptive'), f = by('fixed_capped'), n = by('none');
-    const ratio = f.user.p999 / a.user.p999;
+    const ratio = f.user.p99 / a.user.p99;
     const lead = ratio >= 1.1
-      ? `With the same ${budget}% budget, the adaptive delay reduces the 99.9th-percentile latency to ${ms(a.user.p999)}, ${ratio.toFixed(1)} times lower than the fixed delay (${ms(f.user.p999)}) and ${(n.user.p999 / a.user.p999).toFixed(1)} times lower than no hedging (${ms(n.user.p999)}).`
-      : `Under these conditions the adaptive delay (${ms(a.user.p999)}) and the fixed delay (${ms(f.user.p999)}) are within 10% of each other.`;
-    $('#result').textContent = `${lead} Adaptive hedging sent ${a.extra_pct.toFixed(1)}% extra requests, within its limit.`;
+      ? `With the same ${budget}% budget, the adaptive delay cuts the slowest 1% of page loads to ${ms(a.user.p99)}, ${ratio.toFixed(1)} times lower than the fixed delay (${ms(f.user.p99)}) and ${(n.user.p99 / a.user.p99).toFixed(1)} times lower than no hedging (${ms(n.user.p99)}).`
+      : `Under these conditions the adaptive delay (${ms(a.user.p99)}) and the fixed delay (${ms(f.user.p99)}) are within 10% of each other.`;
+    $('#result').textContent = `${lead} The typical page load falls from ${ms(n.user.p50)} to ${ms(a.user.p50)}. Adaptive hedging sent ${a.extra_pct.toFixed(1)}% extra requests, within its limit.`;
+
+    const over = (id) => by(id).samples.filter((x) => x[1] > SLOW_MS).length / by(id).samples.length;
+    const pct = (v) => Math.round(v * 100) + '%';
+    const hl = $('#headline');
+    hl.replaceChildren(
+      document.createTextNode('A typical page takes '), h('span', 'bad', ms(n.user.p50)), document.createTextNode(' to load without hedging and '),
+      h('span', 'good', ms(a.user.p50)), document.createTextNode(' with it. '),
+      h('span', 'bad', pct(over('none'))), document.createTextNode(' of pages take over a second, against '),
+      h('span', 'good', pct(over('adaptive'))), document.createTextNode('.'),
+    );
   }
 
   // ------------------------------------------------- Figure 1: dashboard demo
@@ -103,7 +117,9 @@
     host.replaceChildren();
     const progress = h('div', 'progress'); const bar = h('i'); progress.append(bar);
     const timer = h('span', 'timer', '');
-    const label = h('div', 'label'); label.append(h('b', '', title), timer);
+    const sub = h('span', 'sub', '');
+    const t = h('div', 't'); t.append(h('b', '', title), sub);
+    const label = h('div', 'label'); label.append(t, timer);
 
     const nav = h('nav'); ['Overview', 'Customers', 'Billing', 'Reports'].forEach((t, i) => nav.append(h('span', i ? '' : 'on', t)));
     const main = h('div', 'main');
@@ -121,14 +137,14 @@
     const table = h('table', 'rows');
     const thead = h('thead'); const hr = h('tr'); ['Customer', 'Plan', 'MRR', 'Status'].forEach((t) => hr.append(h('th', '', t))); thead.append(hr);
     const tbody = h('tbody'); const rowEls = [];
-    for (let r = 0; r < 10; r++) { const tr = h('tr'); for (let c = 0; c < 4; c++) tr.append(h('td', c === 2 ? 'num' : '')); tbody.append(tr); rowEls.push(tr); }
+    for (let r = 0; r < 20; r++) { const tr = h('tr'); for (let c = 0; c < 4; c++) tr.append(h('td', c === 2 ? 'num' : '')); tbody.append(tr); rowEls.push(tr); }
     table.append(thead, tbody);
 
     main.append(kpis, cb, table);
     const body = h('div', 'body'); body.append(nav, main);
     const tally = h('div', 'tally');
     host.append(progress, label, body, tally);
-    return { bar, progress, timer, kpiEls, barEls, rowEls, tally };
+    return { bar, progress, timer, sub, kpiEls, barEls, rowEls, tally };
   }
 
   const apps = {};
@@ -174,12 +190,17 @@
     function reset() {
       const t = { none: by('none').traces, adaptive: by('adaptive').traces };
       traces = t.none.length && t.none.length === t.adaptive.length ? t : null;
-      for (const id of ['none', 'adaptive']) apps[id] = buildApp($('#app-' + id), id === 'none' ? 'Without hedging' : 'With adaptive hedging');
+      for (const id of ['none', 'adaptive']) {
+        apps[id] = buildApp($('#app-' + id), id === 'none' ? 'Without hedging' : 'With adaptive hedging');
+        apps[id].sub.textContent = `typical ${ms(by(id).user.p50)} · slowest 1% ${ms(by(id).user.p99)}`;
+      }
       tally = { none: { n: 0, slow: 0, all: [] }, adaptive: { n: 0, slow: 0, all: [] } };
       loads = 0; deck = []; run = null; nextAt = 0;
       for (const id of ['none', 'adaptive']) { setWaiting(apps[id]); renderTally(id); }
       if (!traces) { for (const id of ['none', 'adaptive']) apps[id].timer.textContent = 'no data'; return; }
-      start();
+      slowest = traces.none.map((t, i) => [Math.max(...t.shards.map((x) => x[0])), i]).sort((a, b) => b[0] - a[0]).map((x) => x[1]);
+      start(slowest[0]); // open with the slowest recorded load so the contrast is obvious
+
     }
 
     function pick() {
@@ -190,10 +211,13 @@
       return deck.pop();
     }
 
-    function start() {
+    // Recorded loads ordered from slowest to fastest without hedging.
+    let slowest = [];
+
+    function start(forceIdx) {
       if (!traces) return;
       loads += 1;
-      run = { idx: pick(), t0: performance.now(), n: loads, done: { none: false, adaptive: false }, filled: { none: new Set(), adaptive: new Set() } };
+      run = { idx: forceIdx != null ? forceIdx : pick(), t0: performance.now(), n: loads, done: { none: false, adaptive: false }, filled: { none: new Set(), adaptive: new Set() } };
       for (const id of ['none', 'adaptive']) setWaiting(apps[id]);
       nextAt = 0;
     }
@@ -205,7 +229,7 @@
       if (!t.n) { el.textContent = 'No loads yet'; return; }
       const sorted = [...t.all].sort((a, b) => a - b);
       el.append(document.createTextNode(`${t.n} ${t.n === 1 ? 'load' : 'loads'} · median `), h('em', '', ms(sorted[Math.floor(sorted.length / 2)])),
-        document.createTextNode(` · over ${SLOW_MS} ms: `), h('em', '', `${t.slow} of ${t.n}`));
+        document.createTextNode(' · over 1 s: '), h('em', '', `${t.slow} of ${t.n}`));
     }
 
     function frame(ts) {
@@ -224,13 +248,13 @@
           app.bar.style.width = (100 * count) / shards.length + '%';
           if (elapsed >= total) {
             run.done[id] = true;
-            app.timer.textContent = 'Loaded in ' + secs(total);
+            app.timer.replaceChildren(document.createTextNode(secs(total)), h('small', '', 'loaded'));
             app.timer.className = 'timer ' + (total > SLOW_MS ? 'slow' : 'done');
             app.progress.classList.add('finished');
             const t = tally[id]; t.n++; t.all.push(total); if (total > SLOW_MS) t.slow++;
             renderTally(id);
           } else {
-            app.timer.textContent = 'Loading… ' + secs(elapsed);
+            app.timer.replaceChildren(document.createTextNode(secs(elapsed)), h('small', '', `${count} of ${PIECES} loaded`));
           }
         }
         if (run.done.none && run.done.adaptive) { run = null; nextAt = ts + 1300; }
@@ -241,6 +265,7 @@
     }
 
     $('#reload').addEventListener('click', () => start());
+    $('#worst').addEventListener('click', () => { if (traces) start(slowest[Math.floor(Math.random() * Math.max(1, Math.ceil(slowest.length / 10)))]); });
     $('#auto').addEventListener('change', () => { if ($('#auto').checked && !run && traces) nextAt = performance.now() + 300; });
     requestAnimationFrame(frame);
     return { reset };
@@ -263,17 +288,17 @@
       const X = (t) => m.l + ((t - warm) / (dur - warm)) * (W - m.l - m.r);
       const Y = (v) => H - m.b - ((Math.log10(v) - lo) / (hi - lo)) * (H - m.t - m.b);
       const s = svg('svg', { viewBox: `0 0 ${W} ${H}` });
-      for (const v of [10, 100, 1000]) {
+      for (const v of [10, 100, 1000, 10000]) {
         const l = Math.log10(v);
         if (l < lo || l > hi) continue;
         s.append(svg('line', { class: 'grid', x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) }));
         s.append(svg('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, v >= 1000 ? v / 1000 + ' s' : v + ' ms'));
       }
       s.append(svg('line', { class: 'sla', x1: m.l, x2: W - m.r, y1: Y(SLOW_MS), y2: Y(SLOW_MS) }));
-      s.append(svg('text', { x: W - m.r - 2, y: Y(SLOW_MS) - 4, 'text-anchor': 'end' }, `${SLOW_MS} ms`));
+      s.append(svg('text', { x: W - m.r - 2, y: Y(SLOW_MS) - 4, 'text-anchor': 'end' }, '1 s'));
       s.append(svg('line', { class: 'axis', x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }));
       if (bottom) {
-        for (let t = 10; t <= dur; t += 10) s.append(svg('text', { x: X(t), y: H - 16, 'text-anchor': 'middle' }, t));
+        for (let t = 30; t <= dur; t += 30) s.append(svg('text', { x: X(t), y: H - 16, 'text-anchor': 'middle' }, t));
         s.append(svg('text', { x: (m.l + W - m.r) / 2, y: H - 2, 'text-anchor': 'middle' }, 'arrival time (s)'));
       }
       if (last.ui.surge > 0) {
@@ -290,7 +315,7 @@
       $('#stat-' + id).replaceChildren(
         document.createTextNode('p99 '), h('em', '', ms(percentile(sorted, 0.99))),
         document.createTextNode(' · '), h('em', '', Math.round((100 * slow) / data[id].length) + '%'),
-        document.createTextNode(` over ${SLOW_MS} ms`),
+        document.createTextNode(' over 1 s'),
       );
     }
   }

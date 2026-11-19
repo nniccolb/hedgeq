@@ -28,12 +28,15 @@
   <section>
     <h2><i>1</i>Experiment</h2>
     <p>
-      Consider a SaaS dashboard. Each piece of the page (four metric cards, six chart bars, ten table rows) is a request to
-      one of 20 shards, each stored on 3 replicas, and the page is finished only when the slowest piece arrives.
-      <span id="exp-shift"></span> Hedging policies may send at most <span id="exp-budget">5</span>% extra requests.
-      Figure 1 replays page loads taken from a simulation of this service; both pages receive identical requests
-      and identical work (seed&nbsp;<span id="seed">1</span>).
+      Consider a SaaS dashboard. Each piece of the page (four metric cards, six chart bars, twenty table rows) is a
+      request to one of 30 shards, each stored on 3 replicas, and the page is finished only when the slowest piece arrives.
+      A typical backend call takes about 30&nbsp;ms, but a server spends about 3% of its time stalled at 40 times slower
+      (garbage collection, a noisy neighbour, a compaction); we chose a severe setting so the effect is easy to see. <span id="exp-shift"></span> Hedging policies may send
+      at most <span id="exp-budget">10</span>% extra requests. Figure 1 replays page loads taken from a simulation of this
+      service; both pages receive identical requests and identical work (seed&nbsp;<span id="seed">1</span>).
     </p>
+
+    <p class="headline" id="headline" aria-live="polite"></p>
 
     <figure class="wide" id="demo">
       <div class="apps">
@@ -43,12 +46,13 @@
       <form class="controls" id="controls">
         <span class="btns left">
           <button type="button" id="reload">Reload page</button>
+          <button type="button" id="worst" class="link">Show a slow one</button>
           <label class="chk"><input type="checkbox" id="auto" checked> Auto-reload</label>
           <label class="chk"><input type="checkbox" id="slow"> Slow motion</label>
           <button type="button" id="again">New data</button>
         </span>
       </form>
-      <figcaption><b>Figure 1.</b> The same dashboard page loads served without hedging (left) and with adaptive hedging (right). Grey blocks are pieces still waiting on a shard; a blue marker means a backup request answered first. Real time unless slow motion is selected.</figcaption>
+      <figcaption><b>Figure 1.</b> The same page loads served without hedging (left) and with adaptive hedging (right), in real time. Grey blocks are pieces still waiting on a shard; a blue marker means a backup request answered first. The page is done when the last block fills. The first load shown is the slowest of the recorded loads; later ones are drawn at random.</figcaption>
     </figure>
 
     <figure>
@@ -60,13 +64,13 @@
         <div class="ph"><b>With adaptive hedging</b><span id="stat-adaptive"></span></div>
         <div id="chart-adaptive" role="img" aria-label="Latency of each sampled request with adaptive hedging"></div>
       </div>
-      <figcaption><b>Figure 2.</b> Every dot is one user request (a thinned sample) placed by arrival time and latency on a log scale. Blue dots were hedged; dark dots took over 200&nbsp;ms. The same requests appear in both panels.</figcaption>
+      <figcaption><b>Figure 2.</b> Every dot is one user request (a thinned sample) placed by arrival time and latency on a log scale. Blue dots were hedged; dark dots took over 1&nbsp;s. The same requests appear in both panels.</figcaption>
     </figure>
 
     <figure>
       <figcaption class="above"><b>Table 1.</b> Whole-run latency and extra load, including a fixed hedge delay under the same budget.</figcaption>
       <table id="tbl">
-        <thead><tr><th>Policy</th><th>p99.9 latency</th><th>Extra requests</th></tr></thead>
+        <thead><tr><th>Policy</th><th>Median page load</th><th>Slowest 1%</th><th>Extra requests</th></tr></thead>
         <tbody></tbody>
       </table>
     </figure>

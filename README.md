@@ -93,7 +93,7 @@ Reproduce: `cargo run --release -p hedgeq -- eval`.
 cargo run --release -p hedgeq -- serve        # http://127.0.0.1:8080
 ```
 
-The page is a short technical note. Figure 1 shows two copies of a SaaS-style dashboard (metric cards, a chart, a table), one served without hedging and one with adaptive hedging. Each piece of the page is one request to one shard; pieces fill in at the latencies recorded by the simulator, in real time, and the page is done when the slowest piece arrives. Both pages replay the same requests, so any difference is the policy. The content shown is placeholder data; only the timing is real. Below it, a scatter plot of individual requests and a table comparing against a fixed hedge delay under the same budget. The page makes no external requests, and the server binds to loopback by default.
+The page is a short technical note. Figure 1 shows two copies of a SaaS-style dashboard (metric cards, a chart, a table), one served without hedging and one with adaptive hedging. Each piece of the page is one request to one shard; pieces fill in at the latencies recorded by the simulator, in real time, and the page is done when the slowest piece arrives. Both pages replay the same requests, so any difference is the policy. The demo uses a deliberately severe setting (servers stall 3% of the time at 40x slower, 30 shards, 10% extra-request budget) so the effect is easy to see; the first load shown is the slowest recorded one, later loads are random. The content shown is placeholder data; only the timing is real. Below it, a scatter plot of individual requests and a table comparing against a fixed hedge delay under the same budget. The page makes no external requests, and the server binds to loopback by default.
 
 ## Repository layout
 
