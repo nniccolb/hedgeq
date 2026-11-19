@@ -29,6 +29,8 @@ const NONE: u32 = u32::MAX;
 const TICK_S: f64 = 0.1;
 /// Upper bound on sub-requests per run (memory guard).
 const MAX_SUBREQUESTS: f64 = 1_500_000.0;
+/// Approximate number of individual requests returned per policy for plotting.
+const TARGET_SAMPLES: f64 = 1200.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -177,6 +179,8 @@ pub struct PolicyResult {
     /// `[ -log10(1-p), latency_ms ]` points of the user-latency percentile spectrum.
     pub spectrum: Vec<[f64; 2]>,
     pub timeline: Vec<TimelinePoint>,
+    /// Evenly thinned user requests, identical across policies: `[arrival_s, latency_ms, hedged (0/1)]`.
+    pub samples: Vec<[f64; 3]>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -266,6 +270,7 @@ struct Sub {
 struct Req {
     arrival: f64,
     remaining: u32,
+    hedged: bool,
 }
 
 struct Server {
@@ -331,6 +336,8 @@ struct Sim<'a> {
     // statistics
     user_lat: Vec<f64>,
     sub_lat: Vec<f64>,
+    samples: Vec<[f64; 3]>,
+    sample_stride: u32,
     buckets: Vec<Bucket>,
     primaries: u64,
     hedges_sent: u64,
@@ -390,6 +397,11 @@ impl<'a> Sim<'a> {
             warmed_up: false,
             user_lat: Vec::new(),
             sub_lat: Vec::new(),
+            samples: Vec::new(),
+            sample_stride: {
+                let expected = cfg.base_rate() * (0.5 + 0.5 * cfg.surge_factor) * cfg.duration_s;
+                ((expected / TARGET_SAMPLES).ceil() as u32).max(1)
+            },
             buckets: vec![Bucket::default(); n_buckets],
             primaries: 0,
             hedges_sent: 0,
@@ -452,7 +464,7 @@ impl<'a> Sim<'a> {
 
     fn on_arrival(&mut self, now: f64) {
         let req = self.reqs.len() as u32;
-        self.reqs.push(Req { arrival: now, remaining: self.cfg.fanout });
+        self.reqs.push(Req { arrival: now, remaining: self.cfg.fanout, hedged: false });
         for shard in 0..self.cfg.fanout {
             self.issue_sub(now, req, shard);
         }
@@ -530,6 +542,8 @@ impl<'a> Sim<'a> {
         let server = shard * r + replica;
         let copy = self.new_copy(sub_id, server);
         self.subs[sub_id as usize].hedge = copy;
+        let req = self.subs[sub_id as usize].req;
+        self.reqs[req as usize].hedged = true;
         self.hedges_sent += 1;
         let b = (issue as usize).min(self.buckets.len() - 1);
         self.buckets[b].hedges += 1;
@@ -590,6 +604,10 @@ impl<'a> Sim<'a> {
             let lat = (now - arrival) * 1000.0;
             if arrival >= self.cfg.warmup_s {
                 self.user_lat.push(lat);
+                if req % self.sample_stride == 0 {
+                    let hedged = if self.reqs[req as usize].hedged { 1.0 } else { 0.0 };
+                    self.samples.push([round(arrival, 3), round(lat, 2), hedged]);
+                }
             }
             let b = (arrival as usize).min(self.buckets.len() - 1);
             self.buckets[b].lat.push(lat as f32);
@@ -658,6 +676,7 @@ impl<'a> Sim<'a> {
             utilization_pct: round(100.0 * busy / capacity, 2),
             spectrum,
             timeline,
+            samples: self.samples,
         }
     }
 }
