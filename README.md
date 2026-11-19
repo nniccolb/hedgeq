@@ -10,6 +10,27 @@ In a service that fans each request out to many replicated shards, rare per-serv
 
 We learn the hedge delay from a decaying, relative-error quantile sketch, steer it with a feedback controller toward a fraction of the budget, and enforce the budget absolutely with a token bucket. In a deterministic simulator with paired random numbers, the adaptive policy stayed under its budget in every scenario tested, matched a fixed delay in steady state, and cut p99.9 by roughly 1.4-2.3x when load or failure rates drifted, at the same cap.
 
+## Background
+
+Hedged requests, and the observation that fan-out amplifies rare per-server slowness into common user-visible latency, are described in:
+
+> Jeffrey Dean and Luiz André Barroso. **The Tail at Scale.** *Communications of the ACM* 56(2), February 2013, pp. 74-80. doi:[10.1145/2408776.2408794](https://doi.org/10.1145/2408776.2408794)
+
+```bibtex
+@article{dean2013tail,
+  author  = {Dean, Jeffrey and Barroso, Luiz Andr{\'e}},
+  title   = {The Tail at Scale},
+  journal = {Communications of the ACM},
+  volume  = {56},
+  number  = {2},
+  pages   = {74--80},
+  year    = {2013},
+  doi     = {10.1145/2408776.2408794}
+}
+```
+
+That work hedges after a fixed delay (for example the 95th percentile of expected latency). `hedgeq` builds on the idea by learning the delay online and enforcing the extra-load budget as a hard invariant; it is an independent implementation and evaluation, not affiliated with the authors.
+
 ## Method
 
 | | Mechanism | Property |
