@@ -93,7 +93,9 @@ Reproduce: `cargo run --release -p hedgeq -- eval`.
 cargo run --release -p hedgeq -- serve        # http://127.0.0.1:8080
 ```
 
-The page is a short technical note. Figure 1 shows two copies of a SaaS-style dashboard (metric cards, a chart, a table), one served without hedging and one with adaptive hedging. Each piece of the page is one request to one shard; pieces fill in at the latencies recorded by the simulator, in real time, and the page is done when the slowest piece arrives. Both pages replay the same requests, so any difference is the policy. The demo uses a deliberately severe setting (servers stall 3% of the time at 40x slower, 30 shards, 10% extra-request budget) so the effect is easy to see; the first load shown is the slowest recorded one, later loads are random. The content shown is placeholder data; only the timing is real. Below it, a scatter plot of individual requests and a table comparing against a fixed hedge delay under the same budget. The page makes no external requests, and the server binds to loopback by default.
+The page is a short technical note. Figure 1 shows two copies of an analytics page: a rotating 3D heatmap of live events by location plus totals. The events live on 20 shards, and every column height and total is a sum over all of them, so the page cannot appear until the slowest shard answers. The left copy is served without hedging, the right with adaptive hedging. Each square in the loading state is one shard query; the page appears at the moment the last square fills. Both copies replay the same recorded requests, so any difference is the policy. Drag a heatmap to rotate it.
+
+The demo uses a deliberately severe setting (servers stall 3% of the time at 40x slower, 20 shards, 10% extra-request budget) so the effect is easy to see. It opens with the slowest recorded load and then replays loads that were slow without hedging; "Include fast loads" shows all of them. The events drawn are synthetic; only the timing is real. The 3D view is plain canvas code with no libraries, and the page makes no external requests. The server binds to loopback by default.
 
 ## Repository layout
 

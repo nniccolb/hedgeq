@@ -28,12 +28,17 @@
   <section>
     <h2><i>1</i>Experiment</h2>
     <p>
-      Consider a SaaS dashboard. Each piece of the page (four metric cards, six chart bars, twenty table rows) is a
-      request to one of 30 shards, each stored on 3 replicas, and the page is finished only when the slowest piece arrives.
-      A typical backend call takes about 30&nbsp;ms, but a server spends about 3% of its time stalled at 40 times slower
-      (garbage collection, a noisy neighbour, a compaction); we chose a severe setting so the effect is easy to see. <span id="exp-shift"></span> Hedging policies may send
-      at most <span id="exp-budget">10</span>% extra requests. Figure 1 replays page loads taken from a simulation of this
-      service; both pages receive identical requests and identical work (seed&nbsp;<span id="seed">1</span>).
+      Consider an analytics page: a 3D heatmap of live events by location, with totals. The events are spread across 20
+      shards, each stored on 3 replicas. Every column height and every total is a sum over <i>all</i> shards, so nothing
+      can be drawn until the slowest shard has answered.
+    </p>
+    <p>
+      Most shard queries are fast, about 30&nbsp;ms. But a server occasionally stalls (here 3% of the time, at 40 times
+      slower: garbage collection, a noisy neighbour, a compaction), so with 20 shards some shard is usually stuck behind a
+      stall and the whole page waits for it. Hedging sends a backup copy of a slow query to another replica; we cap extra
+      requests at <span id="exp-budget">10</span>% of traffic. <span id="exp-shift"></span> Figure 1 replays page loads
+      from a simulation of this service; both pages receive identical requests and identical work
+      (seed&nbsp;<span id="seed">1</span>).
     </p>
 
     <p class="headline" id="headline" aria-live="polite"></p>
@@ -46,13 +51,13 @@
       <form class="controls" id="controls">
         <span class="btns left">
           <button type="button" id="reload">Reload page</button>
-          <button type="button" id="worst" class="link">Show a slow one</button>
           <label class="chk"><input type="checkbox" id="auto" checked> Auto-reload</label>
           <label class="chk"><input type="checkbox" id="slow"> Slow motion</label>
+          <label class="chk"><input type="checkbox" id="fast"> Include fast loads</label>
           <button type="button" id="again">New data</button>
         </span>
       </form>
-      <figcaption><b>Figure 1.</b> The same page loads served without hedging (left) and with adaptive hedging (right), in real time. Grey blocks are pieces still waiting on a shard; a blue marker means a backup request answered first. The page is done when the last block fills. The first load shown is the slowest of the recorded loads; later ones are drawn at random.</figcaption>
+      <figcaption><b>Figure 1.</b> The same page loads, without hedging (left) and with adaptive hedging (right), in real time. Each square is one of the 20 shard queries; the 3D heatmap and totals are sums over all shards, so the page appears only when the last square fills (drag a map to rotate it). A blue square is a query answered first by a backup copy. Loads shown are those that took over a second without hedging (<span id="affected">86</span>% of all loads); the rest finish quickly either way. The first is the slowest recorded. The events drawn are synthetic; only the timing is real.</figcaption>
     </figure>
 
     <figure>

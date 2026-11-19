@@ -27,10 +27,10 @@
 
   const SURGE = 60;           // % traffic increase at the midpoint (fixed experiment)
   const BUDGET = 10;          // % extra requests allowed
-  // Backend scale for the demo: ~30 ms calls, 30 shards (4 cards + 6 bars + 20 rows), 3 minutes of traffic.
+  // Backend scale for the demo: ~30 ms calls, 20 shards (4 cards + 6 bars + 10 rows), 3 minutes of traffic.
   // Servers stall 3% of the time at 40x slower: a deliberately severe setting so the effect is easy to see.
-  const SCALE = { fanout: 30, service_median_ms: 30, episode_ms: 700, duration_s: 180, warmup_s: 15, slow_fraction: 0.03, slow_factor: 40 };
-  const PIECES = 30;
+  const SCALE = { fanout: 20, service_median_ms: 30, episode_ms: 700, duration_s: 180, warmup_s: 15, slow_fraction: 0.03, slow_factor: 40 };
+  const PIECES = 20;
   let seed = 1;
   let last = null;
   const by = (id) => last.results.find((r) => r.id === id);
@@ -85,33 +85,126 @@
 
     const over = (id) => by(id).samples.filter((x) => x[1] > SLOW_MS).length / by(id).samples.length;
     const pct = (v) => Math.round(v * 100) + '%';
-    const hl = $('#headline');
-    hl.replaceChildren(
-      document.createTextNode('A typical page takes '), h('span', 'bad', ms(n.user.p50)), document.createTextNode(' to load without hedging and '),
-      h('span', 'good', ms(a.user.p50)), document.createTextNode(' with it. '),
-      h('span', 'bad', pct(over('none'))), document.createTextNode(' of pages take over a second, against '),
-      h('span', 'good', pct(over('adaptive'))), document.createTextNode('.'),
+    $('#headline').replaceChildren(
+      document.createTextNode('The median shard query takes '), h('b', '', ms(n.sub.p50)),
+      document.createTextNode(', yet a typical page takes '), h('span', 'bad', ms(n.user.p50)),
+      document.createTextNode(', because a page waits for its slowest shard. Hedging brings the typical page to '), h('span', 'good', ms(a.user.p50)),
+      document.createTextNode(' and the share of pages over a second from '), h('span', 'bad', pct(over('none'))),
+      document.createTextNode(' to '), h('span', 'good', pct(over('adaptive'))), document.createTextNode('.'),
     );
   }
 
   // ------------------------------------------------- Figure 1: dashboard demo
-  const KPI = ['MRR', 'Active users', 'Churn', 'Open trials'];
-  const MONTHS = ['Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov'];
-  const COMPANIES = ['Northwind', 'Globex', 'Initech', 'Umbrella', 'Hooli', 'Stark Labs', 'Wayne Corp', 'Acme', 'Soylent', 'Vandelay', 'Cyberdyne', 'Tyrell', 'Massive Dynamic', 'Oscorp', 'Pied Piper', 'Aperture', 'Wonka', 'Gringotts', 'Dunder Mifflin', 'Bluth Co.'];
-  const PLANS = ['Starter', 'Team', 'Business', 'Enterprise'];
-  const STATUS = ['Active', 'Active', 'Active', 'Trial', 'Past due'];
-  const hash = (a, b) => { let x = (a * 374761393 + b * 668265263) >>> 0; x = ((x ^ (x >>> 13)) * 1274126177) >>> 0; return (x ^ (x >>> 16)) >>> 0; };
-  const money = (n) => '$' + n.toLocaleString('en-US');
+  // The page is an aggregate over ALL shards: every column height and every total is a sum of 20 partial
+  // results, so nothing can be drawn until the slowest shard has answered. (Synthetic events; only the timing is real.)
+  const CITIES = [
+    ['New York', -74, 40.7, 10], ['Los Angeles', -118, 34, 6], ['Chicago', -87.6, 41.9, 4], ['Mexico City', -99, 19.4, 4],
+    ['São Paulo', -46.6, -23.5, 6], ['Buenos Aires', -58, -34.6, 3], ['London', -0.1, 51.5, 8], ['Paris', 2.3, 48.9, 5],
+    ['Berlin', 13.4, 52.5, 4], ['Madrid', -3.7, 40.4, 3], ['Moscow', 37.6, 55.8, 4], ['Istanbul', 29, 41, 3],
+    ['Cairo', 31.2, 30, 3], ['Lagos', 3.4, 6.5, 3], ['Nairobi', 36.8, -1.3, 2], ['Johannesburg', 28, -26, 2],
+    ['Dubai', 55.3, 25.2, 3], ['Mumbai', 72.9, 19.1, 6], ['Delhi', 77.2, 28.6, 5], ['Bangalore', 77.6, 13, 3],
+    ['Singapore', 103.8, 1.35, 4], ['Jakarta', 106.8, -6.2, 3], ['Bangkok', 100.5, 13.8, 3], ['Hong Kong', 114.2, 22.3, 4],
+    ['Shanghai', 121.5, 31.2, 6], ['Beijing', 116.4, 39.9, 5], ['Seoul', 127, 37.6, 4], ['Tokyo', 139.7, 35.7, 9],
+    ['Sydney', 151.2, -33.9, 3], ['Toronto', -79.4, 43.7, 3],
+  ];
+  const GW = 48, GH = 24;                 // grid cells (longitude x latitude)
+  const PER_SHARD = 2500, EVENT_SCALE = 30;
+  const cum = CITIES.reduce((a, c) => { a.push((a.length ? a[a.length - 1] : 0) + c[3]); return a; }, []);
 
-  // Placeholder content, different on every load. Only the timing is real.
-  const content = {
-    kpi: (i, n) => [money(48000 + (hash(i, n) % 9000)), (12000 + (hash(i, n) % 2500)).toLocaleString('en-US'), (1 + (hash(i, n) % 30) / 10).toFixed(1) + '%', String(20 + (hash(i, n) % 40))][i],
-    bar: (j, n) => 35 + (hash(j + 10, n) % 60),
-    row: (r, n) => {
-      const k = hash(r + 20, n);
-      return [COMPANIES[(r * 2 + n) % COMPANIES.length], PLANS[k % 4], money(200 + (k % 4800)), STATUS[(k >>> 3) % 5]];
-    },
+  function rng(seed) {
+    let a = seed >>> 0;
+    return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  }
+  const gauss = (r) => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
+
+  // Merge the 20 shards' partial counts. Each shard holds a slice of the events; the page needs all of them.
+  function aggregate(n) {
+    const grid = new Float32Array(GW * GH);
+    const perCity = new Array(CITIES.length).fill(0);
+    let points = 0;
+    for (let shard = 0; shard < PIECES; shard++) {
+      const r = rng(n * 7919 + shard * 104729 + 1);
+      for (let k = 0; k < PER_SHARD; k++) {
+        const pick = r() * cum[cum.length - 1];
+        const ci = cum.findIndex((c) => pick < c);
+        const lon = CITIES[ci][1] + gauss(r) * 3.2, lat = CITIES[ci][2] + gauss(r) * 2.6;
+        const gx = Math.floor(((lon + 180) / 360) * GW), gy = Math.floor(((75 - lat) / 135) * GH);
+        if (gx < 0 || gx >= GW || gy < 0 || gy >= GH) continue;
+        grid[gy * GW + gx] += 1; perCity[ci]++; points++;
+      }
+    }
+    const max = Math.max(...grid);
+    const top = perCity.indexOf(Math.max(...perCity));
+    const top5 = [...perCity].sort((a, b) => b - a).slice(0, 5).reduce((a, b) => a + b, 0);
+    return { grid, max, points, topCity: CITIES[top][0], top5Share: top5 / points };
+  }
+
+  // ---- tiny 3D renderer (plain canvas, no libraries): rotating extruded columns ----
+  const rgbOf = (cssVar) => {
+    const e = document.createElement('span'); e.style.color = `var(${cssVar})`; document.body.append(e);
+    const c = getComputedStyle(e).color.match(/[\d.]+/g).slice(0, 3).map(Number); e.remove(); return c;
   };
+  let palette = null;
+  const refreshPalette = () => { palette = { accent: rgbOf('--accent'), box: rgbOf('--box'), rule: rgbOf('--rule'), ink: rgbOf('--ink'), muted: rgbOf('--muted') }; };
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshPalette);
+  const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+  const css = (c, a = 1) => `rgba(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])},${a})`;
+  const ease = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
+  const TILT = 0.95, MAXH = 9;
+
+  function drawScene(app, now) {
+    const cv = app.canvas, w = cv.clientWidth, hh = cv.clientHeight;
+    if (!w) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(hh * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(hh * dpr); }
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, hh);
+    if (!palette) refreshPalette();
+
+    const theta = 0.35 + (now / 1000) * 0.22 + app.drag;
+    const ct = Math.cos(theta), st = Math.sin(theta), cp = Math.cos(TILT), sp = Math.sin(TILT);
+    const scale = Math.min((w * 0.47) / 22, (hh * 0.92) / (GH * sp + MAXH * cp + 4));
+    const cx = w / 2, cy = hh * 0.6;
+    const P = (x, y, z) => { const rx = x * ct - z * st, rz = x * st + z * ct; return [cx + scale * rx, cy + scale * (rz * sp - y * cp)]; };
+
+    // floor + graticule
+    const x0 = -GW / 2, x1 = GW / 2, z0 = -GH / 2, z1 = GH / 2;
+    ctx.beginPath();
+    [[x0, z0], [x1, z0], [x1, z1], [x0, z1]].forEach(([x, z], i) => { const q = P(x, 0, z); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); });
+    ctx.closePath(); ctx.fillStyle = css(palette.rule, 0.35); ctx.fill(); ctx.strokeStyle = css(palette.muted, 0.5); ctx.lineWidth = 1; ctx.stroke();
+    ctx.strokeStyle = css(palette.muted, 0.22); ctx.beginPath();
+    for (let gx = 4; gx < GW; gx += 4) { const a = P(x0 + gx, 0, z0), b = P(x0 + gx, 0, z1); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+    for (let gz = 4; gz < GH; gz += 4) { const a = P(x0, 0, z0 + gz), b = P(x1, 0, z0 + gz); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+    ctx.stroke();
+
+    if (!app.data) return;
+    const grow = ease((now - app.revealAt) / 800);
+    const cols = [];
+    for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) {
+      const v = app.data.grid[gy * GW + gx];
+      if (v < 1) continue;
+      const t = Math.pow(v / app.data.max, 0.6);
+      const xw = x0 + gx + 0.5, zw = z0 + gy + 0.5;
+      cols.push({ t, h: t * MAXH * grow, x: xw, z: zw, d: xw * st + zw * ct });
+    }
+    cols.sort((a, b) => a.d - b.d); // far to near
+    const low = mix(palette.box, palette.accent, 0.3);
+    const poly = (pts, fill) => {
+      ctx.beginPath(); pts.forEach((q, i) => { if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.closePath();
+      ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = css(palette.box, 0.55); ctx.lineWidth = 0.5; ctx.stroke();
+    };
+    const e = 0.46;
+    for (const c of cols) {
+      const base = mix(low, palette.accent, c.t), y = c.h, x = c.x, z = c.z;
+      // side faces whose outward normal points toward the viewer (normal z after rotation: +x -> sin, -x -> -sin, +z -> cos, -z -> -cos)
+      if (st > 0) poly([P(x + e, 0, z - e), P(x + e, 0, z + e), P(x + e, y, z + e), P(x + e, y, z - e)], css(mix(base, palette.ink, 0.28)));
+      if (st < 0) poly([P(x - e, 0, z - e), P(x - e, 0, z + e), P(x - e, y, z + e), P(x - e, y, z - e)], css(mix(base, palette.ink, 0.2)));
+      if (ct > 0) poly([P(x - e, 0, z + e), P(x + e, 0, z + e), P(x + e, y, z + e), P(x - e, y, z + e)], css(mix(base, palette.ink, 0.12)));
+      if (ct < 0) poly([P(x - e, 0, z - e), P(x + e, 0, z - e), P(x + e, y, z - e), P(x - e, y, z - e)], css(mix(base, palette.ink, 0.2)));
+      poly([P(x - e, y, z - e), P(x + e, y, z - e), P(x + e, y, z + e), P(x - e, y, z + e)], css(mix(base, [255, 255, 255], 0.12)));
+    }
+  }
 
   function buildApp(host, title) {
     host.replaceChildren();
@@ -121,62 +214,63 @@
     const t = h('div', 't'); t.append(h('b', '', title), sub);
     const label = h('div', 'label'); label.append(t, timer);
 
-    const nav = h('nav'); ['Overview', 'Customers', 'Billing', 'Reports'].forEach((t, i) => nav.append(h('span', i ? '' : 'on', t)));
     const main = h('div', 'main');
-    main.append(h('h4', '', 'Overview'));
+    main.append(h('h4', '', 'Live events by location, last 24 hours'));
+    const stats = h('div', 'stats'); const statEls = [];
+    ['Total events', 'Busiest city', 'Top 5 cities'].forEach((k) => { const c = h('div', 'stat'); c.append(h('div', 'k', k)); const v = h('div', 'v'); c.append(v); stats.append(c); statEls.push(v); });
+    const canvas = h('canvas', 'scene');
+    canvas.setAttribute('aria-label', 'Rotating 3D heatmap of events by location');
+    const app = { data: null, revealAt: 0, drag: 0 };
+    let lastX = null;
+    canvas.addEventListener('pointerdown', (e) => { lastX = e.clientX; canvas.setPointerCapture(e.pointerId); });
+    canvas.addEventListener('pointermove', (e) => { if (lastX != null) { app.drag += (e.clientX - lastX) * 0.012; lastX = e.clientX; } });
+    const release = () => { lastX = null; };
+    canvas.addEventListener('pointerup', release); canvas.addEventListener('pointercancel', release);
+    main.append(stats, canvas);
 
-    const kpis = h('div', 'kpis'); const kpiEls = [];
-    KPI.forEach((k) => { const c = h('div', 'kpi'); c.append(h('div', 'k', k)); const v = h('div', 'v'); c.append(v); kpis.append(c); kpiEls.push(v); });
+    // Whole-page loading state: nothing is usable until the last shard returns.
+    const overlay = h('div', 'overlay');
+    const ticks = h('div', 'ticks'); const tickEls = [];
+    for (let i = 0; i < PIECES; i++) { const k = h('span', 'tick'); ticks.append(k); tickEls.push(k); }
+    const ocount = h('div', 'ocount');
+    const onote = h('div', 'onote');
+    overlay.append(h('div', 'spinner'), h('div', 'otitle', 'Aggregating 20 shards…'), ticks, ocount, onote);
 
-    const cb = h('div', 'chart-box'); cb.append(h('div', 'k', 'Revenue by month'));
-    const bars = h('div', 'bars'); const barEls = [];
-    MONTHS.forEach(() => { const b = h('div', 'bar'); b.append(h('div', 'fill')); bars.append(b); barEls.push(b); });
-    const months = h('div', 'months'); MONTHS.forEach((m) => months.append(h('span', '', m)));
-    cb.append(bars, months);
-
-    const table = h('table', 'rows');
-    const thead = h('thead'); const hr = h('tr'); ['Customer', 'Plan', 'MRR', 'Status'].forEach((t) => hr.append(h('th', '', t))); thead.append(hr);
-    const tbody = h('tbody'); const rowEls = [];
-    for (let r = 0; r < 20; r++) { const tr = h('tr'); for (let c = 0; c < 4; c++) tr.append(h('td', c === 2 ? 'num' : '')); tbody.append(tr); rowEls.push(tr); }
-    table.append(thead, tbody);
-
-    main.append(kpis, cb, table);
-    const body = h('div', 'body'); body.append(nav, main);
+    const body = h('div', 'body'); body.append(main, overlay);
+    const why = h('div', 'why');
     const tally = h('div', 'tally');
-    host.append(progress, label, body, tally);
-    return { bar, progress, timer, sub, kpiEls, barEls, rowEls, tally };
+    host.append(progress, label, body, why, tally);
+    return Object.assign(app, { host, bar, progress, timer, sub, statEls, canvas, tally, why, ocount, onote, tickEls });
   }
 
   const apps = {};
 
   function setWaiting(app) {
+    app.host.classList.add('loading');
     app.progress.classList.remove('finished');
     app.bar.style.width = '0%';
-    app.kpiEls.forEach((v) => v.replaceChildren(h('span', 'sk s')));
-    app.barEls.forEach((b) => { b.classList.add('wait'); b.firstChild.style.height = ''; b.firstChild.style.boxShadow = ''; });
-    app.rowEls.forEach((tr) => [...tr.children].forEach((td, c) => td.replaceChildren(h('span', 'sk' + (c === 0 ? ' l' : c === 3 ? ' s' : '')))));
+    app.statEls.forEach((v) => v.replaceChildren(h('span', 'sk s')));
+    app.data = null;
+    app.tickEls.forEach((k) => { k.className = 'tick'; });
+    app.why.replaceChildren();
     app.timer.className = 'timer';
   }
 
-  function fillPiece(app, i, rescued, n) {
-    if (i < 4) {
-      const v = app.kpiEls[i];
-      v.replaceChildren(h('span', 'fade', content.kpi(i, n)));
-      if (rescued) v.prepend(h('span', 'rescued'));
-    } else if (i < 10) {
-      const b = app.barEls[i - 4];
-      b.classList.remove('wait');
-      b.firstChild.style.height = content.bar(i - 4, n) + '%';
-      b.firstChild.style.boxShadow = rescued ? 'inset 0 3px 0 var(--accent)' : '';
-    } else {
-      const tr = app.rowEls[i - 10];
-      const [name, plan, mrr, status] = content.row(i - 10, n);
-      const cells = [...tr.children];
-      cells[0].replaceChildren(...(rescued ? [h('span', 'rescued')] : []), document.createTextNode(name));
-      cells[1].textContent = plan;
-      cells[2].textContent = mrr;
-      cells[3].replaceChildren(h('span', 'pill', status));
-    }
+  // Merge the 20 partial results; every column and total needs all of them, so this runs once, at the end.
+  function showPage(app, shards, n) {
+    app.data = aggregate(n);
+    app.revealAt = performance.now();
+    const d = app.data;
+    app.statEls[0].replaceChildren(h('span', 'fade', ((d.points * EVENT_SCALE) / 1e6).toFixed(2) + ' M'));
+    app.statEls[1].replaceChildren(h('span', 'fade', d.topCity));
+    app.statEls[2].replaceChildren(h('span', 'fade', Math.round(d.top5Share * 100) + '%'));
+    app.host.classList.remove('loading');
+    const sorted = shards.map((x) => x[0]).sort((a, b) => a - b);
+    const rescued = shards.filter((x) => x[1] === 1).length;
+    app.why.replaceChildren(
+      document.createTextNode('Slowest shard '), h('em', '', ms(sorted[sorted.length - 1])), document.createTextNode(' · median shard '), h('em', '', ms(sorted[Math.floor(sorted.length / 2)])),
+      ...(rescued ? [document.createTextNode(` · ${rescued} rescued by a backup`)] : []),
+    );
   }
 
   const demo = (() => {
@@ -198,14 +292,17 @@
       loads = 0; deck = []; run = null; nextAt = 0;
       for (const id of ['none', 'adaptive']) { setWaiting(apps[id]); renderTally(id); }
       if (!traces) { for (const id of ['none', 'adaptive']) apps[id].timer.textContent = 'no data'; return; }
-      slowest = traces.none.map((t, i) => [Math.max(...t.shards.map((x) => x[0])), i]).sort((a, b) => b[0] - a[0]).map((x) => x[1]);
+      const lat = traces.none.map((t, i) => [Math.max(...t.shards.map((x) => x[0])), i]).sort((a, b) => b[0] - a[0]);
+      slowest = lat.map((x) => x[1]);
+      slowPool = lat.filter((x) => x[0] > SLOW_MS).map((x) => x[1]);
+      $('#affected').textContent = Math.round((100 * slowPool.length) / lat.length);
       start(slowest[0]); // open with the slowest recorded load so the contrast is obvious
 
     }
 
     function pick() {
       if (!deck.length) {
-        deck = traces.none.map((_, i) => i);
+        deck = (shownPool()).slice();
         for (let i = deck.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [deck[i], deck[j]] = [deck[j], deck[i]]; }
       }
       return deck.pop();
@@ -213,6 +310,9 @@
 
     // Recorded loads ordered from slowest to fastest without hedging.
     let slowest = [];
+    let slowPool = [];
+    // By default replay loads that were slow without hedging; the rest are fast either way.
+    const shownPool = () => ($('#fast').checked || slowPool.length < 5 ? traces.none.map((_, i) => i) : slowPool);
 
     function start(forceIdx) {
       if (!traces) return;
@@ -233,28 +333,33 @@
     }
 
     function frame(ts) {
+      for (const id of ['none', 'adaptive']) if (apps[id]) drawScene(apps[id], ts);
       if (run) {
         const speed = $('#slow').checked ? 0.25 : 1;
         const elapsed = (ts - run.t0) * speed;
         for (const id of ['none', 'adaptive']) {
           if (run.done[id]) continue;
           const shards = traces[id][run.idx].shards;
-          const total = Math.max(...shards.map((s) => s[0]));
-          let count = 0;
-          shards.forEach((s, i) => {
-            if (s[0] <= elapsed) { count++; if (!run.filled[id].has(i)) { run.filled[id].add(i); fillPiece(apps[id], i, s[1] === 1, run.n); } }
-          });
+          const total = Math.max(...shards.map((x) => x[0]));
           const app = apps[id];
+          let count = 0;
+          shards.forEach((x, i) => {
+            if (x[0] <= elapsed) { count++; if (!run.filled[id].has(i)) { run.filled[id].add(i); app.tickEls[i].className = 'tick on' + (x[1] === 1 ? ' rescued' : ''); } }
+          });
           app.bar.style.width = (100 * count) / shards.length + '%';
           if (elapsed >= total) {
             run.done[id] = true;
-            app.timer.replaceChildren(document.createTextNode(secs(total)), h('small', '', 'loaded'));
+            showPage(app, shards, run.n);
+            app.timer.replaceChildren(document.createTextNode(secs(total)), h('small', '', 'page ready'));
             app.timer.className = 'timer ' + (total > SLOW_MS ? 'slow' : 'done');
             app.progress.classList.add('finished');
             const t = tally[id]; t.n++; t.all.push(total); if (total > SLOW_MS) t.slow++;
             renderTally(id);
           } else {
-            app.timer.replaceChildren(document.createTextNode(secs(elapsed)), h('small', '', `${count} of ${PIECES} loaded`));
+            const left = PIECES - count;
+            app.ocount.textContent = `${count} of ${PIECES} shards returned`;
+            app.onote.textContent = left === 1 ? 'waiting for the last shard' : `waiting for ${left} shards`;
+            app.timer.replaceChildren(document.createTextNode(secs(elapsed)), h('small', '', 'loading'));
           }
         }
         if (run.done.none && run.done.adaptive) { run = null; nextAt = ts + 1300; }
@@ -265,7 +370,7 @@
     }
 
     $('#reload').addEventListener('click', () => start());
-    $('#worst').addEventListener('click', () => { if (traces) start(slowest[Math.floor(Math.random() * Math.max(1, Math.ceil(slowest.length / 10)))]); });
+    $('#fast').addEventListener('change', () => { deck = []; });
     $('#auto').addEventListener('change', () => { if ($('#auto').checked && !run && traces) nextAt = performance.now() + 300; });
     requestAnimationFrame(frame);
     return { reset };
