@@ -1,0 +1,10 @@
+[package]
+name = "hedgeq-core"
+description = "Budgeted, quantile-adaptive request hedging: policy, quantile sketch and a deterministic fan-out simulator."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
