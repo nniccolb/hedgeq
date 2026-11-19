@@ -23,7 +23,7 @@ use crate::policy::{Policy, PolicyKind};
 use crate::rng::{normal, unit, Rng};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, VecDeque};
+use std::collections::{BTreeMap, BinaryHeap, VecDeque};
 
 const NONE: u32 = u32::MAX;
 const TICK_S: f64 = 0.1;
@@ -31,6 +31,8 @@ const TICK_S: f64 = 0.1;
 const MAX_SUBREQUESTS: f64 = 1_500_000.0;
 /// Approximate number of individual requests returned per policy for plotting.
 const TARGET_SAMPLES: f64 = 1200.0;
+/// Approximate number of fully traced requests (per-shard timings) per policy.
+const TARGET_TRACES: f64 = 80.0;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -161,6 +163,14 @@ pub struct TimelinePoint {
     pub warmup: bool,
 }
 
+/// One user request broken down by shard, for replaying what a page load looks like.
+#[derive(Clone, Debug, Serialize)]
+pub struct Trace {
+    pub arrival_s: f64,
+    /// Per shard: `[latency_ms, 1 if the hedge copy won else 0]`.
+    pub shards: Vec<[f64; 2]>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct PolicyResult {
     pub id: &'static str,
@@ -181,6 +191,8 @@ pub struct PolicyResult {
     pub timeline: Vec<TimelinePoint>,
     /// Evenly thinned user requests, identical across policies: `[arrival_s, latency_ms, hedged (0/1)]`.
     pub samples: Vec<[f64; 3]>,
+    /// Fully traced requests, identical across policies.
+    pub traces: Vec<Trace>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -338,6 +350,8 @@ struct Sim<'a> {
     sub_lat: Vec<f64>,
     samples: Vec<[f64; 3]>,
     sample_stride: u32,
+    trace_stride: u32,
+    trace_parts: BTreeMap<u32, Vec<[f64; 2]>>,
     buckets: Vec<Bucket>,
     primaries: u64,
     hedges_sent: u64,
@@ -402,6 +416,11 @@ impl<'a> Sim<'a> {
                 let expected = cfg.base_rate() * (0.5 + 0.5 * cfg.surge_factor) * cfg.duration_s;
                 ((expected / TARGET_SAMPLES).ceil() as u32).max(1)
             },
+            trace_stride: {
+                let expected = cfg.base_rate() * (0.5 + 0.5 * cfg.surge_factor) * cfg.duration_s;
+                ((expected / TARGET_TRACES).ceil() as u32).max(1)
+            },
+            trace_parts: BTreeMap::new(),
             buckets: vec![Bucket::default(); n_buckets],
             primaries: 0,
             hedges_sent: 0,
@@ -592,6 +611,12 @@ impl<'a> Sim<'a> {
         if issue >= self.cfg.warmup_s {
             self.sub_lat.push(lat_ms);
         }
+        if req % self.trace_stride == 0 && issue >= self.cfg.warmup_s {
+            let shard = self.subs[sub_id as usize].shard as usize;
+            let fanout = self.cfg.fanout as usize;
+            let parts = self.trace_parts.entry(req).or_insert_with(|| vec![[f64::NAN, 0.0]; fanout]);
+            parts[shard] = [round(lat_ms, 1), if copy == hedge { 1.0 } else { 0.0 }];
+        }
         for c in [primary, hedge] {
             if c != NONE && c != copy {
                 self.cancel(now, c);
@@ -660,6 +685,11 @@ impl<'a> Sim<'a> {
             });
         }
 
+        let traces: Vec<Trace> = std::mem::take(&mut self.trace_parts)
+            .into_iter()
+            .filter(|(_, v)| v.iter().all(|x| x[0].is_finite()))
+            .map(|(req, shards)| Trace { arrival_s: round(self.reqs[req as usize].arrival, 3), shards })
+            .collect();
         let busy: f64 = self.servers.iter().map(|s| s.busy).sum();
         let capacity = self.servers.len() as f64 * self.end_time.max(1e-9);
         PolicyResult {
@@ -677,6 +707,7 @@ impl<'a> Sim<'a> {
             spectrum,
             timeline,
             samples: self.samples,
+            traces,
         }
     }
 }
@@ -758,6 +789,20 @@ mod tests {
         let adaptive = run(&c, PolicyKind::Adaptive);
         assert_eq!(none.primaries, adaptive.primaries);
         assert_eq!(none.completed, adaptive.completed);
+    }
+
+    #[test]
+    fn traces_are_paired_across_policies_and_complete() {
+        let c = quick();
+        let none = run(&c, PolicyKind::None);
+        let adaptive = run(&c, PolicyKind::Adaptive);
+        assert!(none.traces.len() >= 20, "got {} traces", none.traces.len());
+        assert_eq!(none.traces.len(), adaptive.traces.len());
+        for (a, b) in none.traces.iter().zip(&adaptive.traces) {
+            assert_eq!(a.arrival_s, b.arrival_s);
+            assert_eq!(a.shards.len(), c.fanout as usize);
+        }
+        assert!(none.traces.iter().all(|t| t.shards.iter().all(|s| s[1] == 0.0)), "no hedges without hedging");
     }
 
     #[test]

@@ -87,13 +87,13 @@ Reproduce: `cargo run --release -p hedgeq -- eval`.
 - The *uncapped* fixed delay often has the best latency under drift, but only by spending 1.4-4x its design budget (up to 20% extra requests). That is the overload risk the cap is there to remove; the lab shows it live.
 - With correlated stragglers nothing helps, by construction: hedges have nowhere to escape to.
 
-## Interactive sandbox
+## Interactive demo
 
 ```bash
 cargo run --release -p hedgeq -- serve        # http://127.0.0.1:8080
 ```
 
-The page is a short technical note with an embedded sandbox. Set the traffic increase and the extra-request budget, load the data, and watch the same requests (each dot is one user request) served without hedging and with adaptive hedging, side by side. A table below compares both against a fixed hedge delay under the same budget. The page makes no external requests, and the server binds to loopback by default. Append `#t=40` to the URL for a still frame at 40 s.
+The page is a short technical note. Figure 1 shows two copies of a SaaS-style dashboard (metric cards, a chart, a table), one served without hedging and one with adaptive hedging. Each piece of the page is one request to one shard; pieces fill in at the latencies recorded by the simulator, in real time, and the page is done when the slowest piece arrives. Both pages replay the same requests, so any difference is the policy. The content shown is placeholder data; only the timing is real. Below it, a scatter plot of individual requests and a table comparing against a fixed hedge delay under the same budget. The page makes no external requests, and the server binds to loopback by default.
 
 ## Repository layout
 

@@ -28,13 +28,30 @@
   <section>
     <h2><i>1</i>Experiment</h2>
     <p>
-      We simulate a service of 20 shards with 3 replicas each; every request needs one response from every shard.
+      Consider a SaaS dashboard. Each piece of the page (four metric cards, six chart bars, ten table rows) is a request to
+      one of 20 shards, each stored on 3 replicas, and the page is finished only when the slowest piece arrives.
       <span id="exp-shift"></span> Hedging policies may send at most <span id="exp-budget">5</span>% extra requests.
-      All policies are given identical arrivals and identical work (seed&nbsp;<span id="seed">1</span>).
-      Figure 1 is a sandbox: change the conditions, load the data, and watch the same requests served without and with hedging.
+      Figure 1 replays page loads taken from a simulation of this service; both pages receive identical requests
+      and identical work (seed&nbsp;<span id="seed">1</span>).
     </p>
 
-    <figure id="sandbox">
+    <figure class="wide" id="demo">
+      <div class="apps">
+        <div class="app" id="app-none"></div>
+        <div class="app" id="app-adaptive"></div>
+      </div>
+      <form class="controls" id="controls">
+        <span class="btns left">
+          <button type="button" id="reload">Reload page</button>
+          <label class="chk"><input type="checkbox" id="auto" checked> Auto-reload</label>
+          <label class="chk"><input type="checkbox" id="slow"> Slow motion</label>
+          <button type="button" id="again">New data</button>
+        </span>
+      </form>
+      <figcaption><b>Figure 1.</b> The same dashboard page loads served without hedging (left) and with adaptive hedging (right). Grey blocks are pieces still waiting on a shard; a blue marker means a backup request answered first. Real time unless slow motion is selected.</figcaption>
+    </figure>
+
+    <figure>
       <div class="panel">
         <div class="ph"><b>Without hedging</b><span id="stat-none"></span></div>
         <div id="chart-none" role="img" aria-label="Latency of each sampled request without hedging"></div>
@@ -43,16 +60,7 @@
         <div class="ph"><b>With adaptive hedging</b><span id="stat-adaptive"></span></div>
         <div id="chart-adaptive" role="img" aria-label="Latency of each sampled request with adaptive hedging"></div>
       </div>
-      <form class="controls" id="controls">
-        <label>Traffic increase at midpoint <input type="range" id="in-surge" min="0" max="80" step="5" value="60"><output id="out-surge" for="in-surge">+60%</output></label>
-        <label>Extra-request budget <input type="range" id="in-budget" min="1" max="10" step="1" value="5"><output id="out-budget" for="in-budget">5%</output></label>
-        <span class="btns">
-          <button type="submit" id="load">Load data</button>
-          <button type="button" id="again">New seed</button>
-          <button type="button" id="play">Pause</button>
-        </span>
-      </form>
-      <figcaption><b>Figure 1.</b> Sandbox. Each dot is one user request (a thinned sample), placed by arrival time and latency on a log scale. Blue dots were hedged; dark dots took over 200&nbsp;ms. The same requests appear in both panels.</figcaption>
+      <figcaption><b>Figure 2.</b> Every dot is one user request (a thinned sample) placed by arrival time and latency on a log scale. Blue dots were hedged; dark dots took over 200&nbsp;ms. The same requests appear in both panels.</figcaption>
     </figure>
 
     <figure>
