@@ -119,25 +119,25 @@
   const gauss = (r) => Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
 
   // Merge the 20 shards' partial counts. Each shard holds a slice of the events; the page needs all of them.
-  function aggregate(n) {
-    const grid = new Float32Array(GW * GH);
+  function aggregate(n, gw = GW, gh = GH, perShard = PER_SHARD) {
+    const grid = new Float32Array(gw * gh);
     const perCity = new Array(CITIES.length).fill(0);
     let points = 0;
     for (let shard = 0; shard < PIECES; shard++) {
       const r = rng(n * 7919 + shard * 104729 + 1);
-      for (let k = 0; k < PER_SHARD; k++) {
+      for (let k = 0; k < perShard; k++) {
         const pick = r() * cum[cum.length - 1];
         const ci = cum.findIndex((c) => pick < c);
         const lon = CITIES[ci][1] + gauss(r) * 3.2, lat = CITIES[ci][2] + gauss(r) * 2.6;
-        const gx = Math.floor(((lon + 180) / 360) * GW), gy = Math.floor(((75 - lat) / 135) * GH);
-        if (gx < 0 || gx >= GW || gy < 0 || gy >= GH) continue;
-        grid[gy * GW + gx] += 1; perCity[ci]++; points++;
+        const gx = Math.floor(((lon + 180) / 360) * gw), gy = Math.floor(((75 - lat) / 135) * gh);
+        if (gx < 0 || gx >= gw || gy < 0 || gy >= gh) continue;
+        grid[gy * gw + gx] += 1; perCity[ci]++; points++;
       }
     }
     const max = Math.max(...grid);
     const top = perCity.indexOf(Math.max(...perCity));
     const top5 = [...perCity].sort((a, b) => b - a).slice(0, 5).reduce((a, b) => a + b, 0);
-    return { grid, max, points, topCity: CITIES[top][0], top5Share: top5 / points };
+    return { grid, gw, gh, max, points, topCity: CITIES[top][0], top5Share: top5 / points };
   }
 
   // ---- tiny 3D renderer (plain canvas, no libraries): rotating extruded columns ----
@@ -153,51 +153,47 @@
   const ease = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
   const TILT = 0.9, MAXH = 9;
 
-  function drawScene(app, now) {
-    const cv = app.canvas, w = cv.clientWidth, hh = cv.clientHeight;
-    if (!w) return;
-    const dpr = window.devicePixelRatio || 1;
-    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(hh * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(hh * dpr); }
-    const ctx = cv.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, hh);
+  // Draws the rotating 3D city into the rectangle (ox, oy, w, hh). `d` is null while the page is still loading
+  // (floor only). `lite` skips graticule lines and outlines so dozens of small copies stay fast.
+  function renderCity(ctx, ox, oy, w, hh, d, theta, grow, lite) {
     if (!palette) refreshPalette();
-
-    const theta = 0.35 + (now / 1000) * 0.22 + app.drag;
+    const gw = d ? d.gw : GW, gh = d ? d.gh : GH, maxh = (gw * MAXH) / GW;
     const ct = Math.cos(theta), st = Math.sin(theta), cp = Math.cos(TILT), sp = Math.sin(TILT);
     // Fit the worst case over a full rotation (floor radius R, tallest column) so nothing is ever clipped.
-    const R = Math.hypot(GW / 2, GH / 2);
-    const scale = Math.min((w * 0.94) / (2 * R), (hh * 0.92) / (2 * R * sp + MAXH * cp));
-    const cx = w / 2, cy = hh / 2 + (scale * MAXH * cp) / 2;
+    const R = Math.hypot(gw / 2, gh / 2);
+    const scale = Math.min((w * 0.94) / (2 * R), (hh * 0.92) / (2 * R * sp + maxh * cp));
+    const cx = ox + w / 2, cy = oy + hh / 2 + (scale * maxh * cp) / 2;
     const P = (x, y, z) => { const rx = x * ct - z * st, rz = x * st + z * ct; return [cx + scale * rx, cy + scale * (rz * sp - y * cp)]; };
 
-    // floor + graticule
-    const x0 = -GW / 2, x1 = GW / 2, z0 = -GH / 2, z1 = GH / 2;
+    // floor (+ graticule)
+    const x0 = -gw / 2, x1 = gw / 2, z0 = -gh / 2, z1 = gh / 2;
     ctx.beginPath();
     [[x0, z0], [x1, z0], [x1, z1], [x0, z1]].forEach(([x, z], i) => { const q = P(x, 0, z); if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); });
     ctx.closePath(); ctx.fillStyle = css(palette.rule, 0.35); ctx.fill(); ctx.strokeStyle = css(palette.muted, 0.5); ctx.lineWidth = 1; ctx.stroke();
-    ctx.strokeStyle = css(palette.muted, 0.22); ctx.beginPath();
-    for (let gx = 4; gx < GW; gx += 4) { const a = P(x0 + gx, 0, z0), b = P(x0 + gx, 0, z1); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
-    for (let gz = 4; gz < GH; gz += 4) { const a = P(x0, 0, z0 + gz), b = P(x1, 0, z0 + gz); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
-    ctx.stroke();
-
-    if (!app.data) return;
-    const grow = ease((now - app.revealAt) / 800);
-    const cols = [];
-    for (let gy = 0; gy < GH; gy++) for (let gx = 0; gx < GW; gx++) {
-      const v = app.data.grid[gy * GW + gx];
-      if (v < 1) continue;
-      const t = Math.pow(v / app.data.max, 0.6);
-      const xw = x0 + gx + 0.5, zw = z0 + gy + 0.5;
-      cols.push({ t, h: t * MAXH * grow, x: xw, z: zw, d: xw * st + zw * ct });
+    if (!lite) {
+      ctx.strokeStyle = css(palette.muted, 0.22); ctx.beginPath();
+      for (let gx = 4; gx < gw; gx += 4) { const a = P(x0 + gx, 0, z0), b = P(x0 + gx, 0, z1); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+      for (let gz = 4; gz < gh; gz += 4) { const a = P(x0, 0, z0 + gz), b = P(x1, 0, z0 + gz); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); }
+      ctx.stroke();
     }
-    cols.sort((a, b) => a.d - b.d); // far to near
+    if (!d) return;
+
+    const cols = [];
+    for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+      const v = d.grid[gy * gw + gx];
+      if (v < 1) continue;
+      const t = Math.pow(v / d.max, 0.6);
+      const xw = x0 + gx + 0.5, zw = z0 + gy + 0.5;
+      cols.push({ t, h: t * maxh * grow, x: xw, z: zw, dd: xw * st + zw * ct });
+    }
+    cols.sort((a, b) => a.dd - b.dd); // far to near
     const low = mix(palette.box, palette.accent, 0.3);
     const poly = (pts, fill) => {
       ctx.beginPath(); pts.forEach((q, i) => { if (i) ctx.lineTo(q[0], q[1]); else ctx.moveTo(q[0], q[1]); }); ctx.closePath();
-      ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = css(palette.box, 0.55); ctx.lineWidth = 0.5; ctx.stroke();
+      ctx.fillStyle = fill; ctx.fill();
+      if (!lite) { ctx.strokeStyle = css(palette.box, 0.55); ctx.lineWidth = 0.5; ctx.stroke(); }
     };
-    const e = 0.46;
+    const e = lite ? 0.5 : 0.46;
     for (const c of cols) {
       const base = mix(low, palette.accent, c.t), y = c.h, x = c.x, z = c.z;
       // side faces whose outward normal points toward the viewer (normal z after rotation: +x -> sin, -x -> -sin, +z -> cos, -z -> -cos)
@@ -207,6 +203,17 @@
       if (ct < 0) poly([P(x - e, 0, z - e), P(x + e, 0, z - e), P(x + e, y, z - e), P(x - e, y, z - e)], css(mix(base, palette.ink, 0.2)));
       poly([P(x - e, y, z - e), P(x + e, y, z - e), P(x + e, y, z + e), P(x - e, y, z + e)], css(mix(base, [255, 255, 255], 0.12)));
     }
+  }
+
+  function drawScene(app, now) {
+    const cv = app.canvas, w = cv.clientWidth, hh = cv.clientHeight;
+    if (!w) return;
+    const dpr = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(hh * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(hh * dpr); }
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, hh);
+    renderCity(ctx, 0, 0, w, hh, app.data, 0.35 + (now / 1000) * 0.22 + app.drag, ease((now - app.revealAt) / 800), false);
   }
 
   function buildApp(host, title) {
@@ -374,15 +381,17 @@
     return { reset };
   })();
 
-  // ------------------------------------------- Figure 3: fifty pages at once
-  const WALL_N = 50, WALL_COLS = 10, WALL_GAP = 4, WALL_HOLD = 3000;
+  // ------------------------------------------- Figure 3: fifty small copies of Figure 1
+  const WALL_N = 50, WALL_COLS = 5, WALL_GAP = 6, WALL_HOLD = 3500;
+  const TILE_GW = 24, TILE_GH = 12, TILE_PER_SHARD = 450;
+  const tileCache = new Map();
+  const tileData = (n) => { if (!tileCache.has(n)) tileCache.set(n, aggregate(n, TILE_GW, TILE_GH, TILE_PER_SHARD)); return tileCache.get(n); };
+
   const wall = (() => {
     const sides = {};
     let idxs = [];
-    let t0 = 0;
-    let started = false;
-    let visible = false;
-    let finishedAt = 0;
+    let simElapsed = 0, prevTs = null, lastDraw = 0;
+    let started = false, visible = false, finishedAt = 0;
 
     function build(id, title) {
       const host = $('#wall-' + id);
@@ -394,29 +403,67 @@
       canvas.setAttribute('aria-label', `Fifty page loads ${id === 'none' ? 'without' : 'with'} hedging`);
       const foot = h('div', 'wfoot');
       host.append(label, canvas, foot);
-      sides[id] = { clock, canvas, foot, done: 0, lastDone: 0 };
+      sides[id] = { clock, canvas, foot, pages: [], summary: null };
     }
 
     function reset() {
       const t = { none: by('none').traces, adaptive: by('adaptive').traces };
       if (!t.none.length || t.none.length !== t.adaptive.length) return;
+      tileCache.clear();
       build('none', '(a) Without hedging');
       build('adaptive', '(b) With adaptive hedging');
       const all = t.none.map((_, i) => i);
       for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [all[i], all[j]] = [all[j], all[i]]; }
       idxs = all.slice(0, Math.min(WALL_N, all.length));
-      t0 = performance.now();
-      finishedAt = 0;
-      started = true;
-      // total time per page for each side (the page is ready when its slowest shard returns)
-      for (const id of ['none', 'adaptive']) sides[id].pages = idxs.map((i) => ({ shards: by(id).traces[i].shards.map((x) => x[0]), total: Math.max(...by(id).traces[i].shards.map((x) => x[0])) }));
+      for (const id of ['none', 'adaptive']) {
+        sides[id].pages = idxs.map((i) => {
+          const sh = by(id).traces[i].shards;
+          return { idx: i, lat: sh.map((x) => x[0]), resc: sh.map((x) => x[1] === 1), total: Math.max(...sh.map((x) => x[0])) };
+        });
+      }
+      simElapsed = 0; finishedAt = 0; started = true;
     }
 
-    function drawSide(id, elapsed) {
+    // One tile is a small copy of the Figure 1 page: shard squares while loading, the 3D heatmap when complete.
+    function drawTile(ctx, x, y, tw, th, pg, k, elapsed, now) {
+      const returned = pg.lat.filter((v) => v <= elapsed).length;
+      const ready = elapsed >= pg.total;
+      const slow = ready && pg.total > SLOW_MS;
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x, y, tw, th); ctx.clip();
+      ctx.fillStyle = css(palette.bg, 1); ctx.fillRect(x, y, tw, th);
+      const theta = 0.35 + (now / 1000) * 0.3 + k * 0.4;
+      if (!ready) {
+        renderCity(ctx, x, y, tw, th, null, theta, 0, true);
+        ctx.fillStyle = css(palette.bg, 0.8); ctx.fillRect(x, y, tw, th);
+        const sq = Math.max(3, Math.floor(tw / 15)), g = 1.5, gx0 = x + (tw - (10 * sq + 9 * g)) / 2, gy0 = y + th * 0.22;
+        for (let i = 0; i < 20; i++) {
+          const sx = gx0 + (i % 10) * (sq + g), sy = gy0 + Math.floor(i / 10) * (sq + g);
+          if (pg.lat[i] <= elapsed) { ctx.fillStyle = css(pg.resc[i] ? palette.accent : palette.ink, 1); ctx.fillRect(sx, sy, sq, sq); }
+          else { ctx.strokeStyle = css(palette.ink, 0.7); ctx.lineWidth = 1; ctx.strokeRect(sx + 0.5, sy + 0.5, sq - 1, sq - 1); }
+        }
+        ctx.fillStyle = css(palette.muted, 1); ctx.font = '9px "Iowan Old Style", Charter, Georgia, serif'; ctx.textAlign = 'center';
+        ctx.fillText(`${returned}/20`, x + tw / 2, y + th * 0.78);
+      } else {
+        renderCity(ctx, x, y, tw, th, tileData(pg.idx + 1), theta, ease((elapsed - pg.total) / 600), true);
+        const label = (pg.total / 1000).toFixed(1) + ' s';
+        ctx.font = `${slow ? 700 : 400} 9px "Iowan Old Style", Charter, Georgia, serif`;
+        const lw = ctx.measureText(label).width + 4;
+        ctx.fillStyle = css(palette.bg, 0.85); ctx.fillRect(x + 1, y + th - 12, lw, 11);
+        ctx.fillStyle = css(palette.ink, 1); ctx.textAlign = 'left'; ctx.fillText(label, x + 3, y + th - 3);
+      }
+      ctx.restore();
+      ctx.strokeStyle = css(ready ? (slow ? palette.ink : palette.accent) : palette.muted, 1);
+      ctx.lineWidth = slow ? 2 : 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, tw - 1, th - 1);
+      return ready;
+    }
+
+    function drawSide(id, elapsed, now) {
       const S = sides[id];
       const cv = S.canvas, w = cv.clientWidth;
-      if (!w) return;
-      const tw = (w - (WALL_COLS - 1) * WALL_GAP) / WALL_COLS, th = tw * 0.74;
+      if (!w) return null;
+      const tw = (w - (WALL_COLS - 1) * WALL_GAP) / WALL_COLS, th = tw * 0.56;
       const rows = Math.ceil(idxs.length / WALL_COLS);
       const hgt = Math.round(rows * th + (rows - 1) * WALL_GAP);
       const dpr = window.devicePixelRatio || 1;
@@ -427,37 +474,11 @@
       if (!palette) refreshPalette();
       let done = 0, maxTotal = 0;
       S.pages.forEach((pg, k) => {
-        const x = (k % WALL_COLS) * (tw + WALL_GAP), y = Math.floor(k / WALL_COLS) * (th + WALL_GAP);
-        const returned = pg.shards.filter((v) => v <= elapsed).length;
-        const ready = elapsed >= pg.total;
         maxTotal = Math.max(maxTotal, pg.total);
-        if (ready) {
-          done++;
-          const slow = pg.total > SLOW_MS;
-          ctx.fillStyle = css(mix(palette.bg, palette.accent, 0.16)); ctx.fillRect(x, y, tw, th);
-          // miniature page: header strip and a small block grid
-          ctx.fillStyle = css(palette.accent, 0.9); ctx.fillRect(x, y, tw, 3);
-          const gx = 6, gy = 3, cw = (tw - 8) / gx, ch = (th - 16) / gy;
-          for (let a = 0; a < gx; a++) for (let b = 0; b < gy; b++) {
-            const v = ((k * 31 + a * 17 + b * 7) % 10) / 10;
-            ctx.fillStyle = css(palette.accent, 0.18 + 0.5 * v); ctx.fillRect(x + 4 + a * cw, y + 6 + b * ch, cw - 1, ch - 1);
-          }
-          ctx.strokeStyle = css(slow ? palette.ink : palette.accent, 1); ctx.lineWidth = slow ? 2 : 1; ctx.strokeRect(x + 0.5, y + 0.5, tw - 1, th - 1);
-          const label = (pg.total / 1000).toFixed(1);
-          ctx.font = `${slow ? 700 : 400} 10px "Iowan Old Style", Charter, Georgia, serif`;
-          const lw = ctx.measureText(label).width + 6;
-          ctx.fillStyle = css(palette.bg, 0.88); ctx.fillRect(x + (tw - lw) / 2, y + th - 14, lw, 12);
-          ctx.fillStyle = css(palette.ink, 1); ctx.textAlign = 'center'; ctx.fillText(label, x + tw / 2, y + th - 4);
-        } else {
-          ctx.fillStyle = css(palette.rule, 0.45); ctx.fillRect(x, y, tw, th);
-          const f = returned / pg.shards.length;
-          ctx.fillStyle = css(palette.muted, 0.5); ctx.fillRect(x, y + th * (1 - f), tw, th * f);
-          ctx.strokeStyle = css(palette.muted, 0.9); ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, tw - 1, th - 1);
-        }
+        if (drawTile(ctx, (k % WALL_COLS) * (tw + WALL_GAP), Math.floor(k / WALL_COLS) * (th + WALL_GAP), tw, th, pg, k, elapsed, now)) done++;
       });
-      S.done = done;
       S.clock.textContent = secs(Math.min(elapsed, maxTotal));
-      return { done, maxTotal };
+      return done;
     }
 
     function summarize() {
@@ -467,8 +488,8 @@
         const median = totals[Math.floor(totals.length / 2)];
         const over = totals.filter((v) => v > SLOW_MS).length;
         S.foot.replaceChildren(
-          h('em', '', `${S.pages.length} of ${S.pages.length}`), document.createTextNode(` pages loaded after `), h('em', '', secs(totals[totals.length - 1])),
-          document.createTextNode(`; median page `), h('em', '', ms(median)), document.createTextNode(`; over 1 s: `), h('em', '', `${over} of ${S.pages.length}`), document.createTextNode('.'),
+          h('em', '', `${totals.length} of ${totals.length}`), document.createTextNode(' pages loaded after '), h('em', '', secs(totals[totals.length - 1])),
+          document.createTextNode('; median page '), h('em', '', ms(median)), document.createTextNode('; over 1 s: '), h('em', '', `${over} of ${totals.length}`), document.createTextNode('.'),
         );
         S.summary = { last: totals[totals.length - 1], median, over };
       }
@@ -477,33 +498,34 @@
     }
 
     function frame(ts) {
-      if (started && sides.none && sides.none.pages) {
-        // Only animate while on screen; the clock starts when the figure is first seen.
-        const elapsed = ts - t0;
-        const r = { none: drawSide('none', elapsed), adaptive: drawSide('adaptive', elapsed) };
-        for (const id of ['none', 'adaptive']) {
-          const S = sides[id];
-          if (!S.summary || S.summarizedFor !== t0) {
-            if (r[id] && r[id].done < S.pages.length) { S.foot.replaceChildren(h('em', '', String(r[id].done)), document.createTextNode(` of ${S.pages.length} pages loaded`)); }
+      const dt = prevTs == null ? 0 : Math.min(100, ts - prevTs);
+      prevTs = ts;
+      if (started && sides.none && sides.none.pages.length) {
+        simElapsed += dt * ($('#wall-slow').checked ? 0.25 : 1);
+        if (visible && ts - lastDraw >= 33) { // ~30 fps is plenty for 100 small scenes
+          lastDraw = ts;
+          const done = { none: drawSide('none', simElapsed, ts), adaptive: drawSide('adaptive', simElapsed, ts) };
+          for (const id of ['none', 'adaptive']) {
+            const S = sides[id];
+            if (!S.summary && done[id] != null) S.foot.replaceChildren(h('em', '', String(done[id])), document.createTextNode(` of ${S.pages.length} pages loaded`));
           }
-        }
-        if (r.none && r.adaptive && r.none.done === sides.none.pages.length && r.adaptive.done === sides.adaptive.pages.length) {
-          if (!finishedAt) { finishedAt = ts; summarize(); }
-          else if (ts - finishedAt > WALL_HOLD && visible && $('#wall-repeat').checked) { reset(); t0 = performance.now(); }
+          if (done.none === sides.none.pages.length && done.adaptive === sides.adaptive.pages.length) {
+            if (!finishedAt) { finishedAt = ts; summarize(); }
+            else if (ts - finishedAt > WALL_HOLD && $('#wall-repeat').checked) reset();
+          }
         }
       }
       requestAnimationFrame(frame);
     }
 
-    const restart = () => { reset(); t0 = performance.now(); };
-    $('#wall-again').addEventListener('click', restart);
+    $('#wall-again').addEventListener('click', () => reset());
     new IntersectionObserver((entries) => {
       const now = entries.some((e) => e.isIntersecting);
-      if (now && !visible && sides.none) restart(); // start the clock when the figure scrolls into view
+      if (now && !visible && sides.none) reset(); // start the clock when the figure scrolls into view
       visible = now;
-    }, { threshold: 0.5 }).observe($('#wall'));
+    }, { threshold: 0.3 }).observe($('#wall'));
     requestAnimationFrame(frame);
-    return { reset: () => { reset(); t0 = performance.now(); } };
+    return { reset };
   })();
 
   // ------------------------------------------- Figure 2: scatter of requests

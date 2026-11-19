@@ -84,9 +84,9 @@
   <section>
     <h2><i>2</i>Experiment 2: fifty page loads at once</h2>
     <p>
-      A busy service never serves a single page. Here fifty different pages are requested at the same instant, each
-      assembled from the same 20 shards (fifty distinct recorded loads from the simulation). Every small screen
-      below is one page. It stays grey until all 20 of its shards have answered, then turns blue and shows its load time.
+      A busy service never serves a single page. Figure 3 requests fifty pages at the same instant, each one a small
+      copy of the page in Figure 1, assembled from the same 20 shards (fifty distinct recorded loads from the simulation).
+      Without hedging, watch how long the left side stays unfinished.
     </p>
     <figure class="wide" id="wall">
       <div class="walls">
@@ -97,9 +97,10 @@
         <span class="left">
           <button type="button" id="wall-again">Run again</button>
           <label class="chk"><input type="checkbox" id="wall-repeat" checked> Repeat</label>
+          <label class="chk"><input type="checkbox" id="wall-slow"> Slow motion</label>
         </span>
       </div>
-      <figcaption><b>Figure 3.</b> Fifty page loads started at the same moment, without hedging (a) and with adaptive hedging (b); the same fifty requests appear in both. Each screen fills from the bottom in proportion to the shards that have returned; it turns blue when the page is complete, with its load time in seconds. Heavy outlines mark pages that took over one second. The clock is real time.</figcaption>
+      <figcaption><b>Figure 3.</b> Fifty page loads started at the same moment, without hedging (a) and with adaptive hedging (b); the same fifty requests appear in both. Each small screen is a copy of the page in Figure 1: its squares are the 20 shard queries (a blue square was answered first by a backup copy), and the 3D heatmap appears only when the last square fills. The number is the page&rsquo;s load time, and heavy outlines mark pages over one second. The clock is real time.</figcaption>
     </figure>
   </section>
 
