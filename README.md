@@ -6,6 +6,18 @@
 
 In a service that fans each request out to many replicated shards, rare per-server stalls become the typical user experience: a request is as slow as its slowest part. **Hedging** (sending a duplicate to another replica after a delay and keeping the first answer) repairs the tail, but a fixed delay silently over- or under-spends as load and failure rates drift. `hedgeq` learns the delay online and enforces the extra-load budget as a hard invariant.
 
+## What it looks like
+
+Fifty pages requested at the same instant, each a small copy of the page below, without hedging (left) and with adaptive hedging (right). This frame is 1.6 seconds in: all 50 pages on the right are complete, while 30 on the left are still waiting on a shard. A page is a 3D heatmap summed over all 20 shards, so it cannot appear until the slowest shard answers.
+
+![Fifty page loads without and with hedging, 1.6 seconds in](docs/figure3-fifty-pages.png)
+
+One page, in detail. Without hedging (left) the page is stuck on its last shard after 4.9 seconds; with hedging (right) the same request completed in 0.56 seconds.
+
+![One page load without and with hedging](docs/figure1-one-page.png)
+
+Run it yourself with `cargo run --release -p hedgeq -- serve` (see [Interactive demo](#interactive-demo)).
+
 ## Abstract
 
 We learn the hedge delay from a decaying, relative-error quantile sketch, steer it with a feedback controller toward a fraction of the budget, and enforce the budget absolutely with a token bucket. In a deterministic simulator with paired random numbers, the adaptive policy stayed under its budget in every scenario tested, matched a fixed delay in steady state, and cut p99.9 by roughly 1.4-2.3x when load or failure rates drifted, at the same cap.
