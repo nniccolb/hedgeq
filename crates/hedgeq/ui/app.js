@@ -51,6 +51,7 @@
       renderText();
       drawScatter();
       demo.reset();
+      wall.reset();
     } catch (e) {
       $('#result').textContent = 'Error: ' + e.message;
     } finally {
@@ -86,11 +87,11 @@
     const over = (id) => by(id).samples.filter((x) => x[1] > SLOW_MS).length / by(id).samples.length;
     const pct = (v) => Math.round(v * 100) + '%';
     $('#headline').replaceChildren(
-      document.createTextNode('The median shard query takes '), h('b', '', ms(n.sub.p50)),
-      document.createTextNode(', yet a typical page takes '), h('span', 'bad', ms(n.user.p50)),
-      document.createTextNode(', because a page waits for its slowest shard. Hedging brings the typical page to '), h('span', 'good', ms(a.user.p50)),
-      document.createTextNode(' and the share of pages over a second from '), h('span', 'bad', pct(over('none'))),
-      document.createTextNode(' to '), h('span', 'good', pct(over('adaptive'))), document.createTextNode('.'),
+      h('b', '', 'Key result. '), document.createTextNode('The median shard query takes '), h('b', '', ms(n.sub.p50)),
+      document.createTextNode(', yet a typical page takes '), h('b', '', ms(n.user.p50)),
+      document.createTextNode(' without hedging, because a page waits for its slowest shard. With adaptive hedging the typical page takes '), h('b', '', ms(a.user.p50)),
+      document.createTextNode(', and the share of pages over one second falls from '), h('b', '', pct(over('none'))),
+      document.createTextNode(' to '), h('b', '', pct(over('adaptive'))), document.createTextNode('.'),
     );
   }
 
@@ -145,12 +146,12 @@
     const c = getComputedStyle(e).color.match(/[\d.]+/g).slice(0, 3).map(Number); e.remove(); return c;
   };
   let palette = null;
-  const refreshPalette = () => { palette = { accent: rgbOf('--accent'), box: rgbOf('--box'), rule: rgbOf('--rule'), ink: rgbOf('--ink'), muted: rgbOf('--muted') }; };
+  const refreshPalette = () => { palette = { accent: rgbOf('--accent'), bg: rgbOf('--bg'), box: rgbOf('--box'), rule: rgbOf('--rule'), ink: rgbOf('--ink'), muted: rgbOf('--muted') }; };
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refreshPalette);
   const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
   const css = (c, a = 1) => `rgba(${Math.round(c[0])},${Math.round(c[1])},${Math.round(c[2])},${a})`;
   const ease = (t) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
-  const TILT = 0.95, MAXH = 9;
+  const TILT = 0.9, MAXH = 9;
 
   function drawScene(app, now) {
     const cv = app.canvas, w = cv.clientWidth, hh = cv.clientHeight;
@@ -164,8 +165,10 @@
 
     const theta = 0.35 + (now / 1000) * 0.22 + app.drag;
     const ct = Math.cos(theta), st = Math.sin(theta), cp = Math.cos(TILT), sp = Math.sin(TILT);
-    const scale = Math.min((w * 0.47) / 22, (hh * 0.92) / (GH * sp + MAXH * cp + 4));
-    const cx = w / 2, cy = hh * 0.6;
+    // Fit the worst case over a full rotation (floor radius R, tallest column) so nothing is ever clipped.
+    const R = Math.hypot(GW / 2, GH / 2);
+    const scale = Math.min((w * 0.94) / (2 * R), (hh * 0.92) / (2 * R * sp + MAXH * cp));
+    const cx = w / 2, cy = hh / 2 + (scale * MAXH * cp) / 2;
     const P = (x, y, z) => { const rx = x * ct - z * st, rz = x * st + z * ct; return [cx + scale * rx, cy + scale * (rz * sp - y * cp)]; };
 
     // floor + graticule
@@ -208,16 +211,14 @@
 
   function buildApp(host, title) {
     host.replaceChildren();
-    const progress = h('div', 'progress'); const bar = h('i'); progress.append(bar);
     const timer = h('span', 'timer', '');
     const sub = h('span', 'sub', '');
     const t = h('div', 't'); t.append(h('b', '', title), sub);
     const label = h('div', 'label'); label.append(t, timer);
 
     const main = h('div', 'main');
-    main.append(h('h4', '', 'Live events by location, last 24 hours'));
     const stats = h('div', 'stats'); const statEls = [];
-    ['Total events', 'Busiest city', 'Top 5 cities'].forEach((k) => { const c = h('div', 'stat'); c.append(h('div', 'k', k)); const v = h('div', 'v'); c.append(v); stats.append(c); statEls.push(v); });
+    ['Total events', 'Busiest city', 'Share of top 5 cities'].forEach((k) => { const c = h('div', 'stat'); c.append(h('div', 'k', k)); const v = h('div', 'v'); c.append(v); stats.append(c); statEls.push(v); });
     const canvas = h('canvas', 'scene');
     canvas.setAttribute('aria-label', 'Rotating 3D heatmap of events by location');
     const app = { data: null, revealAt: 0, drag: 0 };
@@ -234,22 +235,20 @@
     for (let i = 0; i < PIECES; i++) { const k = h('span', 'tick'); ticks.append(k); tickEls.push(k); }
     const ocount = h('div', 'ocount');
     const onote = h('div', 'onote');
-    overlay.append(h('div', 'spinner'), h('div', 'otitle', 'Aggregating 20 shards…'), ticks, ocount, onote);
+    overlay.append(h('div', 'otitle', 'Waiting for all 20 shards'), ticks, ocount, onote);
 
     const body = h('div', 'body'); body.append(main, overlay);
     const why = h('div', 'why');
     const tally = h('div', 'tally');
-    host.append(progress, label, body, why, tally);
-    return Object.assign(app, { host, bar, progress, timer, sub, statEls, canvas, tally, why, ocount, onote, tickEls });
+    host.append(label, body, why, tally);
+    return Object.assign(app, { host, timer, sub, statEls, canvas, tally, why, ocount, onote, tickEls });
   }
 
   const apps = {};
 
   function setWaiting(app) {
     app.host.classList.add('loading');
-    app.progress.classList.remove('finished');
-    app.bar.style.width = '0%';
-    app.statEls.forEach((v) => v.replaceChildren(h('span', 'sk s')));
+    app.statEls.forEach((v) => v.replaceChildren(document.createTextNode('\u2013')));
     app.data = null;
     app.tickEls.forEach((k) => { k.className = 'tick'; });
     app.why.replaceChildren();
@@ -268,8 +267,9 @@
     const sorted = shards.map((x) => x[0]).sort((a, b) => a - b);
     const rescued = shards.filter((x) => x[1] === 1).length;
     app.why.replaceChildren(
-      document.createTextNode('Slowest shard '), h('em', '', ms(sorted[sorted.length - 1])), document.createTextNode(' · median shard '), h('em', '', ms(sorted[Math.floor(sorted.length / 2)])),
-      ...(rescued ? [document.createTextNode(` · ${rescued} rescued by a backup`)] : []),
+      document.createTextNode('Slowest shard '), h('em', '', ms(sorted[sorted.length - 1])), document.createTextNode('; median shard '), h('em', '', ms(sorted[Math.floor(sorted.length / 2)])),
+      ...(rescued ? [document.createTextNode(`; ${rescued} ${rescued === 1 ? 'query' : 'queries'} answered first by a backup copy`)] : []),
+      document.createTextNode('.'),
     );
   }
 
@@ -285,8 +285,8 @@
       const t = { none: by('none').traces, adaptive: by('adaptive').traces };
       traces = t.none.length && t.none.length === t.adaptive.length ? t : null;
       for (const id of ['none', 'adaptive']) {
-        apps[id] = buildApp($('#app-' + id), id === 'none' ? 'Without hedging' : 'With adaptive hedging');
-        apps[id].sub.textContent = `typical ${ms(by(id).user.p50)} · slowest 1% ${ms(by(id).user.p99)}`;
+        apps[id] = buildApp($('#app-' + id), id === 'none' ? '(a) Without hedging' : '(b) With adaptive hedging');
+        apps[id].sub.textContent = `Whole run: median ${ms(by(id).user.p50)}, 99th percentile ${ms(by(id).user.p99)}`;
       }
       tally = { none: { n: 0, slow: 0, all: [] }, adaptive: { n: 0, slow: 0, all: [] } };
       loads = 0; deck = []; run = null; nextAt = 0;
@@ -326,10 +326,10 @@
       const t = tally[id];
       const el = apps[id].tally;
       el.replaceChildren();
-      if (!t.n) { el.textContent = 'No loads yet'; return; }
+      if (!t.n) { el.textContent = 'n = 0.'; return; }
       const sorted = [...t.all].sort((a, b) => a - b);
-      el.append(document.createTextNode(`${t.n} ${t.n === 1 ? 'load' : 'loads'} · median `), h('em', '', ms(sorted[Math.floor(sorted.length / 2)])),
-        document.createTextNode(' · over 1 s: '), h('em', '', `${t.slow} of ${t.n}`));
+      el.append(document.createTextNode(`n = ${t.n}; median load `), h('em', '', ms(sorted[Math.floor(sorted.length / 2)])),
+        document.createTextNode('; over 1 s: '), h('em', '', `${t.slow} of ${t.n}`), document.createTextNode('.'));
     }
 
     function frame(ts) {
@@ -346,20 +346,18 @@
           shards.forEach((x, i) => {
             if (x[0] <= elapsed) { count++; if (!run.filled[id].has(i)) { run.filled[id].add(i); app.tickEls[i].className = 'tick on' + (x[1] === 1 ? ' rescued' : ''); } }
           });
-          app.bar.style.width = (100 * count) / shards.length + '%';
           if (elapsed >= total) {
             run.done[id] = true;
             showPage(app, shards, run.n);
-            app.timer.replaceChildren(document.createTextNode(secs(total)), h('small', '', 'page ready'));
+            app.timer.replaceChildren(document.createTextNode(secs(total)), h('small', '', 'complete'));
             app.timer.className = 'timer ' + (total > SLOW_MS ? 'slow' : 'done');
-            app.progress.classList.add('finished');
             const t = tally[id]; t.n++; t.all.push(total); if (total > SLOW_MS) t.slow++;
             renderTally(id);
           } else {
             const left = PIECES - count;
             app.ocount.textContent = `${count} of ${PIECES} shards returned`;
-            app.onote.textContent = left === 1 ? 'waiting for the last shard' : `waiting for ${left} shards`;
-            app.timer.replaceChildren(document.createTextNode(secs(elapsed)), h('small', '', 'loading'));
+            app.onote.textContent = left === 1 ? 'one shard outstanding' : `${left} shards outstanding`;
+            app.timer.replaceChildren(document.createTextNode(secs(elapsed)), h('small', '', 'in progress'));
           }
         }
         if (run.done.none && run.done.adaptive) { run = null; nextAt = ts + 1300; }
@@ -376,6 +374,138 @@
     return { reset };
   })();
 
+  // ------------------------------------------- Figure 3: fifty pages at once
+  const WALL_N = 50, WALL_COLS = 10, WALL_GAP = 4, WALL_HOLD = 3000;
+  const wall = (() => {
+    const sides = {};
+    let idxs = [];
+    let t0 = 0;
+    let started = false;
+    let visible = false;
+    let finishedAt = 0;
+
+    function build(id, title) {
+      const host = $('#wall-' + id);
+      host.replaceChildren();
+      const clock = h('span', 'wclock', '0.0 s');
+      const label = h('div', 'wlabel'); label.append(h('b', '', title), clock);
+      const canvas = h('canvas');
+      canvas.setAttribute('role', 'img');
+      canvas.setAttribute('aria-label', `Fifty page loads ${id === 'none' ? 'without' : 'with'} hedging`);
+      const foot = h('div', 'wfoot');
+      host.append(label, canvas, foot);
+      sides[id] = { clock, canvas, foot, done: 0, lastDone: 0 };
+    }
+
+    function reset() {
+      const t = { none: by('none').traces, adaptive: by('adaptive').traces };
+      if (!t.none.length || t.none.length !== t.adaptive.length) return;
+      build('none', '(a) Without hedging');
+      build('adaptive', '(b) With adaptive hedging');
+      const all = t.none.map((_, i) => i);
+      for (let i = all.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [all[i], all[j]] = [all[j], all[i]]; }
+      idxs = all.slice(0, Math.min(WALL_N, all.length));
+      t0 = performance.now();
+      finishedAt = 0;
+      started = true;
+      // total time per page for each side (the page is ready when its slowest shard returns)
+      for (const id of ['none', 'adaptive']) sides[id].pages = idxs.map((i) => ({ shards: by(id).traces[i].shards.map((x) => x[0]), total: Math.max(...by(id).traces[i].shards.map((x) => x[0])) }));
+    }
+
+    function drawSide(id, elapsed) {
+      const S = sides[id];
+      const cv = S.canvas, w = cv.clientWidth;
+      if (!w) return;
+      const tw = (w - (WALL_COLS - 1) * WALL_GAP) / WALL_COLS, th = tw * 0.74;
+      const rows = Math.ceil(idxs.length / WALL_COLS);
+      const hgt = Math.round(rows * th + (rows - 1) * WALL_GAP);
+      const dpr = window.devicePixelRatio || 1;
+      if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(hgt * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(hgt * dpr); cv.style.height = hgt + 'px'; }
+      const ctx = cv.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, hgt);
+      if (!palette) refreshPalette();
+      let done = 0, maxTotal = 0;
+      S.pages.forEach((pg, k) => {
+        const x = (k % WALL_COLS) * (tw + WALL_GAP), y = Math.floor(k / WALL_COLS) * (th + WALL_GAP);
+        const returned = pg.shards.filter((v) => v <= elapsed).length;
+        const ready = elapsed >= pg.total;
+        maxTotal = Math.max(maxTotal, pg.total);
+        if (ready) {
+          done++;
+          const slow = pg.total > SLOW_MS;
+          ctx.fillStyle = css(mix(palette.bg, palette.accent, 0.16)); ctx.fillRect(x, y, tw, th);
+          // miniature page: header strip and a small block grid
+          ctx.fillStyle = css(palette.accent, 0.9); ctx.fillRect(x, y, tw, 3);
+          const gx = 6, gy = 3, cw = (tw - 8) / gx, ch = (th - 16) / gy;
+          for (let a = 0; a < gx; a++) for (let b = 0; b < gy; b++) {
+            const v = ((k * 31 + a * 17 + b * 7) % 10) / 10;
+            ctx.fillStyle = css(palette.accent, 0.18 + 0.5 * v); ctx.fillRect(x + 4 + a * cw, y + 6 + b * ch, cw - 1, ch - 1);
+          }
+          ctx.strokeStyle = css(slow ? palette.ink : palette.accent, 1); ctx.lineWidth = slow ? 2 : 1; ctx.strokeRect(x + 0.5, y + 0.5, tw - 1, th - 1);
+          const label = (pg.total / 1000).toFixed(1);
+          ctx.font = `${slow ? 700 : 400} 10px "Iowan Old Style", Charter, Georgia, serif`;
+          const lw = ctx.measureText(label).width + 6;
+          ctx.fillStyle = css(palette.bg, 0.88); ctx.fillRect(x + (tw - lw) / 2, y + th - 14, lw, 12);
+          ctx.fillStyle = css(palette.ink, 1); ctx.textAlign = 'center'; ctx.fillText(label, x + tw / 2, y + th - 4);
+        } else {
+          ctx.fillStyle = css(palette.rule, 0.45); ctx.fillRect(x, y, tw, th);
+          const f = returned / pg.shards.length;
+          ctx.fillStyle = css(palette.muted, 0.5); ctx.fillRect(x, y + th * (1 - f), tw, th * f);
+          ctx.strokeStyle = css(palette.muted, 0.9); ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, tw - 1, th - 1);
+        }
+      });
+      S.done = done;
+      S.clock.textContent = secs(Math.min(elapsed, maxTotal));
+      return { done, maxTotal };
+    }
+
+    function summarize() {
+      for (const id of ['none', 'adaptive']) {
+        const S = sides[id];
+        const totals = S.pages.map((p) => p.total).sort((a, b) => a - b);
+        const median = totals[Math.floor(totals.length / 2)];
+        const over = totals.filter((v) => v > SLOW_MS).length;
+        S.foot.replaceChildren(
+          h('em', '', `${S.pages.length} of ${S.pages.length}`), document.createTextNode(` pages loaded after `), h('em', '', secs(totals[totals.length - 1])),
+          document.createTextNode(`; median page `), h('em', '', ms(median)), document.createTextNode(`; over 1 s: `), h('em', '', `${over} of ${S.pages.length}`), document.createTextNode('.'),
+        );
+        S.summary = { last: totals[totals.length - 1], median, over };
+      }
+      const a = sides.none.summary, b = sides.adaptive.summary;
+      $('#result2').textContent = `With fifty pages requested at once, the last page arrives after ${secs(a.last)} without hedging and after ${secs(b.last)} with it; the median page takes ${ms(a.median)} against ${ms(b.median)}, and ${a.over} of 50 pages exceed one second against ${b.over}.`;
+    }
+
+    function frame(ts) {
+      if (started && sides.none && sides.none.pages) {
+        // Only animate while on screen; the clock starts when the figure is first seen.
+        const elapsed = ts - t0;
+        const r = { none: drawSide('none', elapsed), adaptive: drawSide('adaptive', elapsed) };
+        for (const id of ['none', 'adaptive']) {
+          const S = sides[id];
+          if (!S.summary || S.summarizedFor !== t0) {
+            if (r[id] && r[id].done < S.pages.length) { S.foot.replaceChildren(h('em', '', String(r[id].done)), document.createTextNode(` of ${S.pages.length} pages loaded`)); }
+          }
+        }
+        if (r.none && r.adaptive && r.none.done === sides.none.pages.length && r.adaptive.done === sides.adaptive.pages.length) {
+          if (!finishedAt) { finishedAt = ts; summarize(); }
+          else if (ts - finishedAt > WALL_HOLD && visible && $('#wall-repeat').checked) { reset(); t0 = performance.now(); }
+        }
+      }
+      requestAnimationFrame(frame);
+    }
+
+    const restart = () => { reset(); t0 = performance.now(); };
+    $('#wall-again').addEventListener('click', restart);
+    new IntersectionObserver((entries) => {
+      const now = entries.some((e) => e.isIntersecting);
+      if (now && !visible && sides.none) restart(); // start the clock when the figure scrolls into view
+      visible = now;
+    }, { threshold: 0.5 }).observe($('#wall'));
+    requestAnimationFrame(frame);
+    return { reset: () => { reset(); t0 = performance.now(); } };
+  })();
+
   // ------------------------------------------- Figure 2: scatter of requests
   const percentile = (sorted, p) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))];
 
@@ -389,7 +519,7 @@
     for (const [id, bottom] of [['none', false], ['adaptive', true]]) {
       const host = $('#chart-' + id);
       const W = Math.max(320, host.clientWidth), H = bottom ? 190 : 160;
-      const m = { l: 52, r: 10, t: 6, b: bottom ? 32 : 8 };
+      const m = { l: 56, r: 12, t: 18, b: bottom ? 38 : 8 };
       const X = (t) => m.l + ((t - warm) / (dur - warm)) * (W - m.l - m.r);
       const Y = (v) => H - m.b - ((Math.log10(v) - lo) / (hi - lo)) * (H - m.t - m.b);
       const s = svg('svg', { viewBox: `0 0 ${W} ${H}` });
@@ -397,30 +527,35 @@
         const l = Math.log10(v);
         if (l < lo || l > hi) continue;
         s.append(svg('line', { class: 'grid', x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) }));
-        s.append(svg('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, v >= 1000 ? v / 1000 + ' s' : v + ' ms'));
+        s.append(svg('line', { class: 'tick', x1: m.l - 4, x2: m.l, y1: Y(v), y2: Y(v) }));
+        s.append(svg('text', { x: m.l - 8, y: Y(v) + 4, 'text-anchor': 'end' }, v >= 1000 ? v / 1000 + ' s' : v + ' ms'));
       }
       s.append(svg('line', { class: 'sla', x1: m.l, x2: W - m.r, y1: Y(SLOW_MS), y2: Y(SLOW_MS) }));
-      s.append(svg('text', { x: W - m.r - 2, y: Y(SLOW_MS) - 4, 'text-anchor': 'end' }, '1 s'));
       s.append(svg('line', { class: 'axis', x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }));
+      s.append(svg('line', { class: 'axis', x1: m.l, x2: m.l, y1: m.t, y2: H - m.b }));
       if (bottom) {
-        for (let t = 30; t <= dur; t += 30) s.append(svg('text', { x: X(t), y: H - 16, 'text-anchor': 'middle' }, t));
-        s.append(svg('text', { x: (m.l + W - m.r) / 2, y: H - 2, 'text-anchor': 'middle' }, 'arrival time (s)'));
+        for (let t = 30; t <= dur; t += 30) {
+          s.append(svg('line', { class: 'tick', x1: X(t), x2: X(t), y1: H - m.b, y2: H - m.b + 4 }));
+          s.append(svg('text', { x: X(t), y: H - m.b + 17, 'text-anchor': 'middle' }, t));
+        }
+        s.append(svg('text', { x: (m.l + W - m.r) / 2, y: H - 3, 'text-anchor': 'middle' }, 'Request arrival time (s)'));
       }
+      s.append(svg('text', { class: 'ylab', transform: `translate(12 ${(m.t + H - m.b) / 2}) rotate(-90)`, 'text-anchor': 'middle' }, 'Page latency'));
       if (last.ui.surge > 0) {
-        s.append(svg('line', { class: 'shift', x1: X(shift), x2: X(shift), y1: m.t, y2: H - m.b }));
-        s.append(svg('text', { x: X(shift) + 5, y: m.t + 10 }, `traffic +${last.ui.surge}%`));
+        s.append(svg('line', { class: 'shift', x1: X(shift), x2: X(shift), y1: m.t - 4, y2: H - m.b }));
+        s.append(svg('text', { class: 'it', x: X(shift), y: m.t - 7, 'text-anchor': 'middle' }, `traffic +${last.ui.surge}%`));
       }
       let slow = 0;
       for (const d of data[id]) {
         const isSlow = d.l > SLOW_MS; if (isSlow) slow++;
-        s.append(svg('circle', { class: 'dot' + (d.h ? ' hedged' : '') + (isSlow ? ' slow' : ''), cx: X(d.t).toFixed(1), cy: Y(d.l).toFixed(1), r: 2.3 }));
+        s.append(svg('circle', { class: 'dot' + (d.h ? ' hedged' : '') + (isSlow ? ' slow' : ''), cx: X(d.t).toFixed(1), cy: Y(d.l).toFixed(1), r: 1.9 }));
       }
       host.replaceChildren(s);
       const sorted = data[id].map((d) => d.l).sort((a, b) => a - b);
       $('#stat-' + id).replaceChildren(
-        document.createTextNode('p99 '), h('em', '', ms(percentile(sorted, 0.99))),
-        document.createTextNode(' · '), h('em', '', Math.round((100 * slow) / data[id].length) + '%'),
-        document.createTextNode(' over 1 s'),
+        document.createTextNode('99th percentile '), h('em', '', ms(percentile(sorted, 0.99))),
+        document.createTextNode('; '), h('em', '', Math.round((100 * slow) / data[id].length) + '%'),
+        document.createTextNode(' of requests over 1 s'),
       );
     }
   }

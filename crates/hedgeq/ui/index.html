@@ -26,7 +26,7 @@
   </section>
 
   <section>
-    <h2><i>1</i>Experiment</h2>
+    <h2><i>1</i>Experiment 1: one page load</h2>
     <p>
       Consider an analytics page: a 3D heatmap of live events by location, with totals. The events are spread across 20
       shards, each stored on 3 replicas. Every column height and every total is a sum over <i>all</i> shards, so nothing
@@ -62,14 +62,14 @@
 
     <figure>
       <div class="panel">
-        <div class="ph"><b>Without hedging</b><span id="stat-none"></span></div>
+        <div class="ph"><b>(a) Without hedging</b><span id="stat-none"></span></div>
         <div id="chart-none" role="img" aria-label="Latency of each sampled request without hedging"></div>
       </div>
       <div class="panel">
-        <div class="ph"><b>With adaptive hedging</b><span id="stat-adaptive"></span></div>
+        <div class="ph"><b>(b) With adaptive hedging</b><span id="stat-adaptive"></span></div>
         <div id="chart-adaptive" role="img" aria-label="Latency of each sampled request with adaptive hedging"></div>
       </div>
-      <figcaption><b>Figure 2.</b> Every dot is one user request (a thinned sample) placed by arrival time and latency on a log scale. Blue dots were hedged; dark dots took over 1&nbsp;s. The same requests appear in both panels.</figcaption>
+      <figcaption><b>Figure 2.</b> Page latency of individual requests (a thinned sample) against arrival time, on a log scale. Panels (a) and (b) show the same requests. Blue points were hedged; dark points took over 1&nbsp;s; the dotted line marks 1&nbsp;s.</figcaption>
     </figure>
 
     <figure>
@@ -82,12 +82,35 @@
   </section>
 
   <section>
-    <h2><i>2</i>Result</h2>
-    <p id="result">Running&hellip;</p>
+    <h2><i>2</i>Experiment 2: fifty page loads at once</h2>
+    <p>
+      A busy service never serves a single page. Here fifty different pages are requested at the same instant, each
+      assembled from the same 20 shards (fifty distinct recorded loads from the simulation). Every small screen
+      below is one page. It stays grey until all 20 of its shards have answered, then turns blue and shows its load time.
+    </p>
+    <figure class="wide" id="wall">
+      <div class="walls">
+        <div class="wall" id="wall-none"></div>
+        <div class="wall" id="wall-adaptive"></div>
+      </div>
+      <div class="controls">
+        <span class="left">
+          <button type="button" id="wall-again">Run again</button>
+          <label class="chk"><input type="checkbox" id="wall-repeat" checked> Repeat</label>
+        </span>
+      </div>
+      <figcaption><b>Figure 3.</b> Fifty page loads started at the same moment, without hedging (a) and with adaptive hedging (b); the same fifty requests appear in both. Each screen fills from the bottom in proportion to the shards that have returned; it turns blue when the page is complete, with its load time in seconds. Heavy outlines mark pages that took over one second. The clock is real time.</figcaption>
+    </figure>
   </section>
 
   <section>
-    <h2><i>3</i>Limitations</h2>
+    <h2><i>3</i>Result</h2>
+    <p id="result">Running&hellip;</p>
+    <p id="result2"></p>
+  </section>
+
+  <section>
+    <h2><i>4</i>Limitations</h2>
     <p>
       Results are from a simulation with simple queueing and cooperative cancellation, not a production system.
       With a steady load the adaptive and fixed delays perform about equally; the advantage appears when conditions change.
